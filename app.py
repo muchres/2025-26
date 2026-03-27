@@ -35,8 +35,8 @@ SAMPLE_EVENTS = [
     {"type": "Shot",  "team": TEAM_HOME, "time": 74,  "player": "M. Morata",    "x": 88.1, "y": 35.5, "success": False},
     {"type": "Shot",  "team": TEAM_AWAY, "time": 82,  "player": "B. Iglesias",  "x": 90.3, "y": 32.8, "success": True},
     {"type": "Pass",  "team": TEAM_HOME, "time": 90,  "player": "T. Lemar",     "x": 50.0, "y": 30.0, "success": False},
-    {"type": "Pass",  "team": TEAM_AWAY, "time": 96,  "player": "A. Guardado",  "x": 62.4, "y": 25.6, "success": True},
-    {"type": "Shot",  "team": TEAM_HOME, "time": 103, "player": "L. Suarez",    "x": 87.5, "y": 36.0, "success": False},
+    {"type": "Pass",  "team": TEAM_AWAY, "time": 85,  "player": "A. Guardado",  "x": 62.4, "y": 25.6, "success": True},
+    {"type": "Shot",  "team": TEAM_HOME, "time": 88,  "player": "L. Suarez",    "x": 87.5, "y": 36.0, "success": False},
 ]
 
 # Momentum time-series (placeholder, 0-90 min)
