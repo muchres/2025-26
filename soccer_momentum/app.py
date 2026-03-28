@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Dash, dcc, html, Input, Output
@@ -9,52 +11,27 @@ from dash import Dash, dcc, html, Input, Output
 GRAPH_HEIGHT = 500
 MARGIN_L = 60   # left margin (px) — start of x-axis
 MARGIN_R = 20   # right margin (px)
-MARGIN_T = 80   # top margin (px)  — room for title + timer
+MARGIN_T = 60   # top margin (px)  — title only (timer is now an HTML element)
 MARGIN_B = 30   # bottom margin (px) — reduced: slider lives inside the graph
-PLOT_HEIGHT = GRAPH_HEIGHT - MARGIN_T - MARGIN_B   # 390 px
-SLIDER_TOP_PX = MARGIN_T + PLOT_HEIGHT // 2        # pixel row of y=0  (275)
+PLOT_HEIGHT = GRAPH_HEIGHT - MARGIN_T - MARGIN_B   # 410 px
+SLIDER_TOP_PX = MARGIN_T + PLOT_HEIGHT // 2        # pixel row of y=0  (265)
 
 # ---------------------------------------------------------------------------
-# Sample match DataFrame — includes additional time (common in soccer)
-# Period 1: minutes 1-47  (45 regular + 2 extra-time minutes)
-# Period 2: minutes 48-95 (45 regular + 3 extra-time minutes; 48 total minute-bins)
+# Load match DataFrame from CSV.
+# Period 1 (period_id=1): time_min 0-46 (45 regular + extra time up to 46)
+# Period 2 (period_id=2): time_min 45-95 (starts at 45; 45 regular + extra time)
+# Overlap at minutes 45-46 is intentional: period 1 extra time coincides with
+# the minute labels at which period 2 kicks off.
 # ---------------------------------------------------------------------------
-_p1 = list(range(1, 48))    # 47 minutes
-_p2 = list(range(48, 96))   # 48 minutes
-
-data = {
-    "period_id": [1] * len(_p1) + [2] * len(_p2),
-    "time_min":  _p1 + _p2,
-    "Threats": [
-        # Period 1 — 47 values
-        0.3, -0.1, 0.5, 0.2, -0.3, 0.4, 0.1, -0.2, 0.6, 0.3,
-        -0.4, 0.2, 0.5, 0.1, -0.1, 0.3, 0.4, -0.5, 0.2, 0.6,
-        0.1, -0.3, 0.4, 0.2, -0.2, 0.5, -0.1, 0.3, -0.4, 0.2,
-        0.6, -0.2, 0.4, 0.1, -0.3, 0.5, 0.2, -0.1, 0.3, 0.4,
-        -0.2, 0.6, 0.1, -0.3, 0.5, -0.4, 0.3,
-        # Period 2 — 48 values
-        -0.2, 0.4, 0.3, -0.1, 0.5, 0.2, -0.3, 0.6, 0.1, -0.4,
-        0.3, 0.5, -0.2, 0.4, 0.1, -0.3, 0.6, 0.2, -0.1, 0.5,
-        0.3, -0.4, 0.2, 0.4, -0.2, 0.5, 0.1, -0.3, 0.6, 0.2,
-        -0.1, 0.4, 0.3, -0.5, 0.2, 0.6, -0.2, 0.4, 0.1, -0.3,
-        0.5, 0.2, -0.1, 0.3, 0.4, 0.3, -0.2, 0.1,
-    ],
-    "home_goal": [0] * (len(_p1) + len(_p2)),
-    "away_goal": [0] * (len(_p1) + len(_p2)),
-}
-
-df = pd.DataFrame(data)
-
-# Goals at specific minutes (use loc for explicit minute-to-row mapping)
-df.loc[df["time_min"] == 27, "away_goal"] = 1
-df.loc[df["time_min"] == 72, "home_goal"] = 1
+_CSV_PATH = os.path.join(os.path.dirname(__file__), "momentum_df.csv")
+df = pd.read_csv(_CSV_PATH)
 
 # Derived values — recompute whenever the DataFrame changes
 MAX_MINUTE = int(df["time_min"].max())
 # Half-time separator: just after the last minute of period 1
 HALFTIME_X = float(df.loc[df["period_id"] == 1, "time_min"].max()) + 0.5
 
-# Slider marks: standard milestones + highlight if extra time extends past 90
+# Slider marks: standard milestones + highlight when extra time extends past 90
 _slider_marks: dict = {
     0:  {"label": "0'",  "style": {"color": "#aaa", "fontSize": "11px"}},
     45: {"label": "45'", "style": {"color": "#aaa", "fontSize": "11px"}},
@@ -66,6 +43,12 @@ if MAX_MINUTE > 90:
         "style": {"color": "yellow", "fontSize": "11px"},
     }
 
+
+def format_timer(minute: int) -> str:
+    """Return match time as mm:ss:mmm — slider is in whole minutes so ss=00, mmm=000."""
+    return f"{minute:02d}:00:000"
+
+
 # ---------------------------------------------------------------------------
 # Helper: build figure for a given slider value
 # ---------------------------------------------------------------------------
@@ -73,32 +56,34 @@ if MAX_MINUTE > 90:
 def build_figure(slider_value: int) -> go.Figure:
     fig = go.Figure()
 
-    # Vectorized color + opacity computation
-    time_vals   = df["time_min"].values
-    threat_vals = df["Threats"].values
-
     def to_rgba(is_positive: bool, opacity: float) -> str:
         return (
             f"rgba(220,50,50,{opacity})" if is_positive
             else f"rgba(50,168,82,{opacity})"
         )
 
-    marker_colors = [
-        to_rgba(t >= 0, 1.0 if m <= slider_value else 0.3)
-        for t, m in zip(threat_vals, time_vals)
-    ]
+    # One bar trace per period so the two halves can be styled independently.
+    # barmode="overlay" draws them on top of each other at the shared
+    # minutes 45-46 at the period junction.
+    for period, grp in df.groupby("period_id"):
+        time_vals   = grp["time_min"].values
+        threat_vals = grp["Threats"].values
 
-    # Momentum bars
-    fig.add_trace(
-        go.Bar(
-            x=df["time_min"],
-            y=df["Threats"],
-            marker_color=marker_colors,
-            hovertemplate="Minute: %{x}<br>Threat Index: %{y:.2f}<extra></extra>",
-            name="Momentum",
-            showlegend=False,
+        marker_colors = [
+            to_rgba(t >= 0, 1.0 if m <= slider_value else 0.3)
+            for t, m in zip(threat_vals, time_vals)
+        ]
+
+        fig.add_trace(
+            go.Bar(
+                x=time_vals,
+                y=threat_vals,
+                marker_color=marker_colors,
+                hoverinfo="skip",       # no tooltip — graph is background
+                name=f"Period {period}",
+                showlegend=False,
+            )
         )
-    )
 
     # Half-time dashed line (position derived from data to support extra time)
     fig.add_vline(
@@ -130,9 +115,7 @@ def build_figure(slider_value: int) -> go.Figure:
                 ),
                 text=[label],
                 textposition="top center" if is_home else "bottom center",
-                hovertemplate=(
-                    f"{label} at minute {int(grow['time_min'])}<extra></extra>"
-                ),
+                hoverinfo="skip",       # no tooltip — graph is background
                 name=label,
                 showlegend=True,
             )
@@ -147,10 +130,6 @@ def build_figure(slider_value: int) -> go.Figure:
             line_dash="solid",
             opacity=0.6,
         )
-
-    # Timer annotation: mm:ss:ms where mm = match minute, ss = seconds, ms = milliseconds.
-    # Slider operates in whole-minute steps, so ss and ms are always 00.
-    timer_text = f"{slider_value:02d}:00:00"
 
     fig.update_layout(
         plot_bgcolor="#1a1a2e",
@@ -172,17 +151,9 @@ def build_figure(slider_value: int) -> go.Figure:
             gridcolor="#2a2a4a",
             zerolinecolor="#555",
         ),
+        hovermode=False,        # disable all hover interactions
+        barmode="overlay",      # periods share the same x positions at minute junction
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        annotations=[
-            dict(
-                text=timer_text,
-                xref="paper", yref="paper",
-                x=1.0, y=1.08,
-                showarrow=False,
-                font=dict(size=20, color="cyan", family="Courier New, monospace"),
-                align="right",
-            )
-        ],
         margin=dict(t=MARGIN_T, r=MARGIN_R, b=MARGIN_B, l=MARGIN_L),
         bargap=0.05,
     )
@@ -202,6 +173,21 @@ app.layout = html.Div(
             "⚽ Soccer Match Momentum Dashboard",
             style={"color": "white", "textAlign": "center", "marginBottom": "10px"},
         ),
+        # Timer — lives outside the figure so it stays legible regardless of
+        # graph render mode; synced with the slider via the callback below.
+        html.Div(
+            id="timer-display",
+            style={
+                "color": "cyan",
+                "textAlign": "right",
+                "fontFamily": "Courier New, monospace",
+                "fontSize": "24px",
+                "paddingRight": f"{MARGIN_R + 4}px",
+                "marginBottom": "4px",
+                "letterSpacing": "2px",
+            },
+            children=format_timer(MAX_MINUTE),
+        ),
         # Relative-positioned container: graph fills it, slider sits on top at y=0
         html.Div(
             style={"position": "relative", "height": f"{GRAPH_HEIGHT}px"},
@@ -211,9 +197,8 @@ app.layout = html.Div(
                     figure=build_figure(MAX_MINUTE),
                     style={"height": f"{GRAPH_HEIGHT}px", "width": "100%"},
                     config={
-                        "scrollZoom": False,
-                        "doubleClick": False,
-                        "displayModeBar": False,
+                        "staticPlot": True,     # render as background image: no hover,
+                        "displayModeBar": False, # no toolbar, no interactivity
                     },
                 ),
                 # Slider overlaid at y=0 (centre of graph)
@@ -244,8 +229,8 @@ app.layout = html.Div(
         html.Div(
             style={"color": "#aaa", "textAlign": "center", "marginTop": "10px", "fontSize": "13px"},
             children=[
-                "🔴 Offensive momentum (positive Threats)  |  "
-                "🟢 Defensive momentum (negative Threats)  |  "
+                "🔴 Offensive momentum  |  "
+                "🟢 Defensive momentum  |  "
                 "⭐ Home goal (top) / Away goal (bottom)  |  "
                 "Dimmed bars = future momentum"
             ],
@@ -255,14 +240,15 @@ app.layout = html.Div(
 
 
 # ---------------------------------------------------------------------------
-# Callback: update graph when slider moves
+# Callback: update graph and timer when slider moves
 # ---------------------------------------------------------------------------
 @app.callback(
     Output("momentum-graph", "figure"),
+    Output("timer-display", "children"),
     Input("time-slider", "value"),
 )
 def update_graph(slider_value):
-    return build_figure(slider_value)
+    return build_figure(slider_value), format_timer(slider_value)
 
 
 if __name__ == "__main__":
