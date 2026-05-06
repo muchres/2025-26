@@ -43,12 +43,18 @@
     }
     input[type="file"],
     input[type="number"],
+    input[type="color"],
     button {
       width: 100%;
       padding: 8px 10px;
       border: 1px solid #cbd5f5;
       border-radius: 8px;
       font-size: 14px;
+    }
+    input[type="color"] {
+      padding: 0;
+      height: 38px;
+      background: #ffffff;
     }
     button {
       background: #2563eb;
@@ -107,6 +113,14 @@
         <input id="pitchImage" type="file" accept="image/png" />
       </div>
       <div>
+        <label for="homeColor">Home team color</label>
+        <input id="homeColor" type="color" value="#1d4ed8" />
+      </div>
+      <div>
+        <label for="awayColor">Away team color</label>
+        <input id="awayColor" type="color" value="#dc2626" />
+      </div>
+      <div>
         <label for="fps">Playback FPS</label>
         <input id="fps" type="number" min="1" max="120" value="25" />
       </div>
@@ -139,6 +153,8 @@
     const playButton = document.getElementById("playButton");
     const pauseButton = document.getElementById("pauseButton");
     const fpsInput = document.getElementById("fps");
+    const homeColorInput = document.getElementById("homeColor");
+    const awayColorInput = document.getElementById("awayColor");
 
     const matchNameEl = document.getElementById("matchName");
     const scoreLineEl = document.getElementById("scoreLine");
@@ -163,6 +179,11 @@
       const ready = matchInfo && trackingFrames.length > 0 && pitchImage;
       playButton.disabled = !ready;
       pauseButton.disabled = !ready;
+    }
+
+    function syncColorInputs() {
+      homeColorInput.value = homeColor;
+      awayColorInput.value = awayColor;
     }
 
     function parseJSONFile(file) {
@@ -300,6 +321,16 @@
       animationHandle = requestAnimationFrame(animate);
     }
 
+    homeColorInput.addEventListener("input", (event) => {
+      homeColor = event.target.value || homeColor;
+      drawFrame(trackingFrames[frameIndex]);
+    });
+
+    awayColorInput.addEventListener("input", (event) => {
+      awayColor = event.target.value || awayColor;
+      drawFrame(trackingFrames[frameIndex]);
+    });
+
     matchInfoInput.addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file) return;
@@ -307,6 +338,7 @@
         matchInfo = await parseJSONFile(file);
         homeColor = matchInfo.home_team_kit?.jersey_color || "#1d4ed8";
         awayColor = matchInfo.away_team_kit?.jersey_color || "#dc2626";
+        syncColorInputs();
         buildPlayerMap(matchInfo);
         updateMeta({});
         updateButtons();
