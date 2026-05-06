@@ -238,7 +238,10 @@
     function buildPlayerMap(info) {
       playerTeamMap = new Map();
       info.players.forEach((player) => {
-        playerTeamMap.set(player.id, player.team_id);
+        playerTeamMap.set(player.id, {
+          teamId: player.team_id,
+          name: player.name || player.short_name || "",
+        });
       });
     }
 
@@ -292,7 +295,8 @@
       (frame.player_data || []).forEach((player) => {
         const { x, y, player_id, is_detected } = player;
         if (x === null || y === null) return;
-        const teamId = playerTeamMap.get(player_id);
+        const playerInfo = playerTeamMap.get(player_id);
+        const teamId = playerInfo?.teamId;
         const fill = teamId === matchInfo.home_team.id ? homeColor : awayColor;
         const point = worldToCanvas(x, y);
         ctx.beginPath();
@@ -301,6 +305,14 @@
         ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
         ctx.fill();
         ctx.globalAlpha = 1;
+
+        if (playerInfo?.name) {
+          ctx.fillStyle = "#000000";
+          ctx.font = "12px \"Segoe UI\", system-ui, sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "top";
+          ctx.fillText(playerInfo.name, point.x, point.y + 12);
+        }
       });
 
       updateMeta(frame);
