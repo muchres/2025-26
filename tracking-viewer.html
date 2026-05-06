@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Match Tracking Viewer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    body {
+      margin: 0;
+      background: #f7f7f8;
+      color: #1c1c1e;
+    }
+    header {
+      padding: 16px 24px;
+      background: #0f172a;
+      color: #f8fafc;
+    }
+    main {
+      padding: 20px 24px 40px;
+      display: grid;
+      gap: 20px;
+    }
+    .panel {
+      background: #ffffff;
+      border-radius: 12px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      padding: 16px;
+    }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    input[type="file"],
+    input[type="number"],
+    button {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #cbd5f5;
+      border-radius: 8px;
+      font-size: 14px;
+    }
+    button {
+      background: #2563eb;
+      color: #fff;
+      border: none;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled {
+      background: #94a3b8;
+      cursor: not-allowed;
+    }
+    .canvas-wrap {
+      display: grid;
+      justify-items: center;
+      padding: 12px;
+    }
+    canvas {
+      max-width: 100%;
+      border-radius: 12px;
+      border: 1px solid #e2e8f0;
+      background: #0f172a;
+    }
+    .meta {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      font-size: 14px;
+    }
+    .chip {
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: #f1f5f9;
+      text-align: center;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Match Tracking Viewer</h1>
+    <p>Upload match info JSON, tracking JSONL, and a pitch PNG to animate the match.</p>
+  </header>
+  <main>
+    <section class="panel controls">
+      <div>
+        <label for="matchInfo">Match info JSON</label>
+        <input id="matchInfo" type="file" accept="application/json" />
+      </div>
+      <div>
+        <label for="trackingData">Tracking JSONL</label>
+        <input id="trackingData" type="file" accept="application/json,application/jsonl,.jsonl,.txt" />
+      </div>
+      <div>
+        <label for="pitchImage">Pitch PNG</label>
+        <input id="pitchImage" type="file" accept="image/png" />
+      </div>
+      <div>
+        <label for="fps">Playback FPS</label>
+        <input id="fps" type="number" min="1" max="120" value="25" />
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button id="playButton" disabled>Play</button>
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button id="pauseButton" disabled>Pause</button>
+      </div>
+    </section>
+
+    <section class="panel meta" id="metaPanel">
+      <div class="chip" id="matchName">Match: -</div>
+      <div class="chip" id="scoreLine">Score: -</div>
+      <div class="chip" id="frameInfo">Frame: -</div>
+      <div class="chip" id="periodInfo">Period: -</div>
+    </section>
+
+    <section class="panel canvas-wrap">
+      <canvas id="pitchCanvas" width="1200" height="760"></canvas>
+    </section>
+  </main>
+
+  <script>
+    const matchInfoInput = document.getElementById("matchInfo");
+    const trackingInput = document.getElementById("trackingData");
+    const pitchInput = document.getElementById("pitchImage");
+    const playButton = document.getElementById("playButton");
+    const pauseButton = document.getElementById("pauseButton");
+    const fpsInput = document.getElementById("fps");
+
+    const matchNameEl = document.getElementById("matchName");
+    const scoreLineEl = document.getElementById("scoreLine");
+    const frameInfoEl = document.getElementById("frameInfo");
+    const periodInfoEl = document.getElementById("periodInfo");
+
+    const canvas = document.getElementById("pitchCanvas");
+    const ctx = canvas.getContext("2d");
+
+    let matchInfo = null;
+    let trackingFrames = [];
+    let pitchImage = null;
+    let animationHandle = null;
+    let frameIndex = 0;
+    let lastFrameTime = 0;
+
+    let playerTeamMap = new Map();
+    let homeColor = "#1d4ed8";
+    let awayColor = "#dc2626";
+
+    function updateButtons() {
+      const ready = matchInfo && trackingFrames.length > 0 && pitchImage;
+      playButton.disabled = !ready;
+      pauseButton.disabled = !ready;
+    }
+
+    function parseJSONFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            resolve(JSON.parse(reader.result));
+          } catch (error) {
+            reject(error);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsText(file);
+      });
+    }
+
+    function parseJSONLFile(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          try {
+            const lines = reader.result
+              .split(/\r?\n/)
+              .map((line) => line.trim())
+              .filter(Boolean);
+            const frames = lines.map((line) => JSON.parse(line));
+            resolve(frames);
+          } catch (error) {
+            reject(error);
+          }
+        };
+        reader.onerror = reject;
+        reader.readAsText(file);
+      });
+    }
+
+    function loadImage(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function buildPlayerMap(info) {
+      playerTeamMap = new Map();
+      info.players.forEach((player) => {
+        playerTeamMap.set(player.id, player.team_id);
+      });
+    }
+
+    function updateMeta(frame) {
+      if (!matchInfo) return;
+      matchNameEl.textContent = `Match: ${matchInfo.home_team.name} vs ${matchInfo.away_team.name}`;
+      scoreLineEl.textContent = `Score: ${matchInfo.home_team_score} - ${matchInfo.away_team_score}`;
+      frameInfoEl.textContent = `Frame: ${frame.frame ?? "-"} | Time: ${frame.timestamp ?? "-"}`;
+      periodInfoEl.textContent = `Period: ${frame.period ?? "-"}`;
+    }
+
+    function getFieldDimensions() {
+      const length = matchInfo?.pitch_length ?? 105;
+      const width = matchInfo?.pitch_width ?? 68;
+      return { length, width };
+    }
+
+    function worldToCanvas(x, y) {
+      const { length, width } = getFieldDimensions();
+      const padding = 20;
+      const fieldWidth = canvas.width - padding * 2;
+      const fieldHeight = canvas.height - padding * 2;
+      const scaleX = fieldWidth / length;
+      const scaleY = fieldHeight / width;
+      const cx = padding + (x + length / 2) * scaleX;
+      const cy = padding + (width / 2 - y) * scaleY;
+      return { x: cx, y: cy };
+    }
+
+    function drawFrame(frame) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (pitchImage) {
+        ctx.drawImage(pitchImage, 0, 0, canvas.width, canvas.height);
+      }
+
+      if (!frame) return;
+
+      // Draw ball
+      if (frame.ball_data) {
+        const { x, y, is_detected } = frame.ball_data;
+        if (x !== null && y !== null) {
+          const point = worldToCanvas(x, y);
+          ctx.beginPath();
+          ctx.fillStyle = is_detected ? "#fbbf24" : "#f97316";
+          ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+
+      // Draw players
+      (frame.player_data || []).forEach((player) => {
+        const { x, y, player_id, is_detected } = player;
+        if (x === null || y === null) return;
+        const teamId = playerTeamMap.get(player_id);
+        const fill = teamId === matchInfo.home_team.id ? homeColor : awayColor;
+        const point = worldToCanvas(x, y);
+        ctx.beginPath();
+        ctx.fillStyle = fill;
+        ctx.globalAlpha = is_detected ? 1 : 0.55;
+        ctx.arc(point.x, point.y, 9, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      });
+
+      updateMeta(frame);
+    }
+
+    function animate(timestamp) {
+      if (!lastFrameTime) lastFrameTime = timestamp;
+      const fps = Math.max(1, Number(fpsInput.value) || 25);
+      const frameDuration = 1000 / fps;
+      const elapsed = timestamp - lastFrameTime;
+
+      if (elapsed >= frameDuration) {
+        drawFrame(trackingFrames[frameIndex]);
+        frameIndex = (frameIndex + 1) % trackingFrames.length;
+        lastFrameTime = timestamp;
+      }
+
+      animationHandle = requestAnimationFrame(animate);
+    }
+
+    matchInfoInput.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        matchInfo = await parseJSONFile(file);
+        homeColor = matchInfo.home_team_kit?.jersey_color || "#1d4ed8";
+        awayColor = matchInfo.away_team_kit?.jersey_color || "#dc2626";
+        buildPlayerMap(matchInfo);
+        updateMeta({});
+        updateButtons();
+      } catch (error) {
+        alert("Failed to parse match info JSON.");
+        console.error(error);
+      }
+    });
+
+    trackingInput.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        trackingFrames = await parseJSONLFile(file);
+        frameIndex = 0;
+        updateButtons();
+      } catch (error) {
+        alert("Failed to parse tracking JSONL.");
+        console.error(error);
+      }
+    });
+
+    pitchInput.addEventListener("change", async (event) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      try {
+        pitchImage = await loadImage(file);
+        drawFrame(trackingFrames[frameIndex]);
+        updateButtons();
+      } catch (error) {
+        alert("Failed to load pitch image.");
+        console.error(error);
+      }
+    });
+
+    playButton.addEventListener("click", () => {
+      if (animationHandle) cancelAnimationFrame(animationHandle);
+      lastFrameTime = 0;
+      animationHandle = requestAnimationFrame(animate);
+    });
+
+    pauseButton.addEventListener("click", () => {
+      if (animationHandle) {
+        cancelAnimationFrame(animationHandle);
+        animationHandle = null;
+      }
+    });
+  </script>
+</body>
+</html>
