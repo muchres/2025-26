@@ -91,6 +91,59 @@
       text-align: center;
       font-weight: 600;
     }
+    .formation {
+      display: grid;
+      gap: 12px;
+    }
+    .formation-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .player-table {
+      display: grid;
+      gap: 8px;
+    }
+    .player-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 90px 90px;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 8px;
+      border-radius: 10px;
+      background: #f8fafc;
+    }
+    .player-row input[type="number"] {
+      padding: 6px 8px;
+    }
+    .player-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .player-badge {
+      width: 12px;
+      height: 12px;
+      border-radius: 999px;
+      display: inline-block;
+    }
+    .table-header {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) 90px 90px;
+      gap: 8px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #475569;
+      padding: 0 8px;
+      text-transform: uppercase;
+    }
+    .formation-hint {
+      font-size: 13px;
+      color: #475569;
+      margin: 0;
+    }
   </style>
 </head>
 <body>
@@ -144,6 +197,31 @@
     <section class="panel canvas-wrap">
       <canvas id="pitchCanvas" width="1200" height="760"></canvas>
     </section>
+
+    <section class="panel formation" id="formationPanel">
+      <h2>Formation lines</h2>
+      <div class="formation-grid">
+        <div>
+          <h3 id="homeTeamLabel">Home team</h3>
+          <div class="table-header">
+            <span>Player</span>
+            <span>Line ID</span>
+            <span>Order</span>
+          </div>
+          <div class="player-table" id="homePlayerTable"></div>
+        </div>
+        <div>
+          <h3 id="awayTeamLabel">Away team</h3>
+          <div class="table-header">
+            <span>Player</span>
+            <span>Line ID</span>
+            <span>Order</span>
+          </div>
+          <div class="player-table" id="awayPlayerTable"></div>
+        </div>
+      </div>
+      <p class="formation-hint">Assign players the same line ID and increasing order to draw connection lines.</p>
+    </section>
   </main>
 
   <script>
@@ -161,6 +239,11 @@
     const frameInfoEl = document.getElementById("frameInfo");
     const periodInfoEl = document.getElementById("periodInfo");
 
+    const homeTeamLabel = document.getElementById("homeTeamLabel");
+    const awayTeamLabel = document.getElementById("awayTeamLabel");
+    const homePlayerTable = document.getElementById("homePlayerTable");
+    const awayPlayerTable = document.getElementById("awayPlayerTable");
+
     const canvas = document.getElementById("pitchCanvas");
     const ctx = canvas.getContext("2d");
 
@@ -172,6 +255,7 @@
     let lastFrameTime = 0;
 
     let playerTeamMap = new Map();
+    let formationAssignments = new Map();
     let homeColor = "#1d4ed8";
     let awayColor = "#dc2626";
 
@@ -241,6 +325,7 @@
         playerTeamMap.set(player.id, {
           teamId: player.team_id,
           name: player.name || player.short_name || "",
+          jerseyNumber: player.jersey_number,
         });
       });
     }
@@ -271,6 +356,56 @@
       return { x: cx, y: cy };
     }
 
+    function drawFormationLines(frame) {
+      if (!frame || !matchInfo) return;
+
+      const positions = new Map();
+      (frame.player_data || []).forEach((player) => {
+        if (player.x === null || player.y === null) return;
+        const info = playerTeamMap.get(player.player_id);
+        if (!info) return;
+        positions.set(player.player_id, {
+          point: worldToCanvas(player.x, player.y),
+          teamId: info.teamId,
+        });
+      });
+
+      const lineGroups = new Map();
+      formationAssignments.forEach((assignment, playerId) => {
+        if (!assignment?.lineId || !assignment?.order) return;
+        const position = positions.get(playerId);
+        if (!position) return;
+        const key = `${position.teamId}-${assignment.lineId}`;
+        if (!lineGroups.has(key)) {
+          lineGroups.set(key, {
+            teamId: position.teamId,
+            points: [],
+          });
+        }
+        lineGroups.get(key).points.push({
+          order: assignment.order,
+          point: position.point,
+        });
+      });
+
+      lineGroups.forEach((group) => {
+        if (group.points.length < 2) return;
+        group.points.sort((a, b) => a.order - b.order);
+        const color = group.teamId === matchInfo.home_team.id ? homeColor : awayColor;
+        ctx.strokeStyle = `${color}aa`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        group.points.forEach((item, index) => {
+          if (index === 0) {
+            ctx.moveTo(item.point.x, item.point.y);
+          } else {
+            ctx.lineTo(item.point.x, item.point.y);
+          }
+        });
+        ctx.stroke();
+      });
+    }
+
     function drawFrame(frame) {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       if (pitchImage) {
@@ -278,6 +413,8 @@
       }
 
       if (!frame) return;
+
+      drawFormationLines(frame);
 
       // Draw ball
       if (frame.ball_data) {
@@ -333,13 +470,97 @@
       animationHandle = requestAnimationFrame(animate);
     }
 
+    function createPlayerRow(player, teamColor) {
+      const row = document.createElement("div");
+      row.className = "player-row";
+
+      const name = document.createElement("div");
+      name.className = "player-name";
+      const badge = document.createElement("span");
+      badge.className = "player-badge";
+      badge.style.background = teamColor;
+      const label = document.createElement("span");
+      const number = player.jersey_number ? `#${player.jersey_number}` : "";
+      label.textContent = `${number} ${player.name || player.short_name || player.id}`.trim();
+      name.appendChild(badge);
+      name.appendChild(label);
+
+      const lineInput = document.createElement("input");
+      lineInput.type = "number";
+      lineInput.min = "1";
+      lineInput.placeholder = "1";
+      lineInput.dataset.playerId = player.id;
+      lineInput.dataset.field = "lineId";
+
+      const orderInput = document.createElement("input");
+      orderInput.type = "number";
+      orderInput.min = "1";
+      orderInput.placeholder = "1";
+      orderInput.dataset.playerId = player.id;
+      orderInput.dataset.field = "order";
+
+      const assignment = formationAssignments.get(player.id);
+      if (assignment?.lineId) lineInput.value = assignment.lineId;
+      if (assignment?.order) orderInput.value = assignment.order;
+
+      [lineInput, orderInput].forEach((input) => {
+        input.addEventListener("input", (event) => {
+          const playerId = Number(event.target.dataset.playerId);
+          const field = event.target.dataset.field;
+          const value = Number(event.target.value);
+          const current = formationAssignments.get(playerId) || {};
+          if (!Number.isFinite(value) || value <= 0) {
+            const updated = { ...current, [field]: null };
+            formationAssignments.set(playerId, updated);
+          } else {
+            formationAssignments.set(playerId, {
+              ...current,
+              [field]: value,
+            });
+          }
+          drawFrame(trackingFrames[frameIndex]);
+        });
+      });
+
+      row.appendChild(name);
+      row.appendChild(lineInput);
+      row.appendChild(orderInput);
+
+      return row;
+    }
+
+    function renderPlayerTables() {
+      if (!matchInfo) return;
+      homePlayerTable.innerHTML = "";
+      awayPlayerTable.innerHTML = "";
+
+      homeTeamLabel.textContent = matchInfo.home_team.name;
+      awayTeamLabel.textContent = matchInfo.away_team.name;
+
+      const homePlayers = matchInfo.players.filter(
+        (player) => player.team_id === matchInfo.home_team.id
+      );
+      const awayPlayers = matchInfo.players.filter(
+        (player) => player.team_id === matchInfo.away_team.id
+      );
+
+      homePlayers.forEach((player) => {
+        homePlayerTable.appendChild(createPlayerRow(player, homeColor));
+      });
+      awayPlayers.forEach((player) => {
+        awayPlayerTable.appendChild(createPlayerRow(player, awayColor));
+      });
+    }
+
     homeColorInput.addEventListener("input", (event) => {
       homeColor = event.target.value || homeColor;
+      renderPlayerTables();
       drawFrame(trackingFrames[frameIndex]);
     });
 
     awayColorInput.addEventListener("input", (event) => {
       awayColor = event.target.value || awayColor;
+      renderPlayerTables();
       drawFrame(trackingFrames[frameIndex]);
     });
 
@@ -352,6 +573,7 @@
         awayColor = matchInfo.away_team_kit?.jersey_color || "#dc2626";
         syncColorInputs();
         buildPlayerMap(matchInfo);
+        renderPlayerTables();
         updateMeta({});
         updateButtons();
       } catch (error) {
@@ -367,6 +589,7 @@
         trackingFrames = await parseJSONLFile(file);
         frameIndex = 0;
         updateButtons();
+        drawFrame(trackingFrames[frameIndex]);
       } catch (error) {
         alert("Failed to parse tracking JSONL.");
         console.error(error);
