@@ -328,6 +328,129 @@
       });
     }
 
+    function normalizePositionName(value) {
+      if (!value) return "";
+      return String(value).toLowerCase().trim();
+    }
+
+    function getPlayerPositionName(player) {
+      if (!player) return "";
+      if (typeof player.position === "string") return player.position;
+      if (player.position?.name) return player.position.name;
+      if (player.position?.short_name) return player.position.short_name;
+      if (player.position?.abbreviation) return player.position.abbreviation;
+      return (
+        player.position_name ||
+        player.position_short_name ||
+        player.role ||
+        player.primary_position ||
+        ""
+      );
+    }
+
+    function getExplicitNumber(value) {
+      const number = Number(value);
+      return Number.isFinite(number) && number > 0 ? number : null;
+    }
+
+    function getPositionKey(positionName) {
+      const normalized = normalizePositionName(positionName);
+      if (!normalized) return "";
+      const replacements = [
+        ["goalkeeper", "gk"],
+        ["keeper", "gk"],
+        ["left back", "lb"],
+        ["right back", "rb"],
+        ["left wing back", "lwb"],
+        ["right wing back", "rwb"],
+        ["left center back", "lcb"],
+        ["right center back", "rcb"],
+        ["center back", "cb"],
+        ["defensive midfield", "dm"],
+        ["central midfield", "cm"],
+        ["attacking midfield", "am"],
+        ["left midfield", "lm"],
+        ["right midfield", "rm"],
+        ["left wing", "lw"],
+        ["right wing", "rw"],
+        ["center forward", "cf"],
+        ["second striker", "ss"],
+        ["striker", "st"],
+      ];
+      let simplified = normalized.replace(/[-_/]/g, " ").replace(/\s+/g, " ").trim();
+      replacements.forEach(([phrase, key]) => {
+        if (simplified.includes(phrase)) {
+          simplified = key;
+        }
+      });
+      return simplified.replace(/\s+/g, "");
+    }
+
+    function getLineIdFromPosition(positionKey) {
+      const key = normalizePositionName(positionKey);
+      if (!key) return null;
+      if (key.includes("gk") || key.includes("keeper")) return 1;
+      const defenderKeys = ["lb", "lwb", "lcb", "cb", "rcb", "rb", "rwb", "wb", "def", "back"];
+      const midfielderKeys = ["dm", "ldm", "rdm", "cm", "lcm", "rcm", "am", "cam", "lam", "ram", "lm", "rm", "mid", "mf"];
+      const forwardKeys = ["lw", "rw", "lf", "rf", "cf", "st", "ss", "fw", "fwd", "forward", "striker", "wing"];
+      if (defenderKeys.some((token) => key.includes(token))) return 2;
+      if (midfielderKeys.some((token) => key.includes(token))) return 3;
+      if (forwardKeys.some((token) => key.includes(token))) return 4;
+      return null;
+    }
+
+    function getOrderFromPositionKey(lineId, positionKey) {
+      if (!lineId || !positionKey) return null;
+      const key = normalizePositionName(positionKey);
+      if (lineId === 1) return 1;
+      const lineOrders = {
+        2: ["lwb", "lb", "lcb", "cb", "rcb", "rb", "rwb"],
+        3: ["lm", "lcm", "cm", "rcm", "rm", "ldm", "dm", "rdm", "lam", "cam", "am", "ram"],
+        4: ["lw", "lf", "cf", "st", "rf", "rw"],
+      };
+      const orderList = lineOrders[lineId];
+      if (!orderList) return null;
+      const index = orderList.findIndex((token) => key.includes(token));
+      return index >= 0 ? index + 1 : null;
+    }
+
+    function getDefaultAssignmentForPlayer(player) {
+      if (!player) return null;
+      const explicitLineId = getExplicitNumber(
+        player.line_id ??
+          player.lineId ??
+          player.position_line ??
+          player.position_line_id ??
+          player.position_group
+      );
+      const explicitOrder = getExplicitNumber(
+        player.line_order ??
+          player.lineOrder ??
+          player.position_order ??
+          player.position_order_id ??
+          player.order ??
+          player.formation_order ??
+          player.formation_place
+      );
+      const positionName = getPlayerPositionName(player);
+      const positionKey = getPositionKey(positionName);
+      const lineId = explicitLineId ?? getLineIdFromPosition(positionKey || positionName);
+      const order = explicitOrder ?? getOrderFromPositionKey(lineId, positionKey || positionName);
+      if (!lineId && !order) return null;
+      return {
+        lineId,
+        order,
+      };
+    }
+
+    function ensureDefaultAssignment(playerId, defaultAssignment) {
+      if (!defaultAssignment || formationAssignments.has(playerId)) return;
+      formationAssignments.set(playerId, {
+        lineId: defaultAssignment.lineId ?? null,
+        order: defaultAssignment.order ?? null,
+      });
+    }
+
     function buildPlayerMap(info) {
       playerTeamMap = new Map();
       info.players.forEach((player) => {
@@ -335,6 +458,7 @@
           teamId: player.team_id,
           name: player.name || player.short_name || "",
           jerseyNumber: player.jersey_number,
+          defaultAssignment: getDefaultAssignmentForPlayer(player),
         });
       });
     }
@@ -488,7 +612,7 @@
       animationHandle = requestAnimationFrame(animate);
     }
 
-    function createPlayerRow(player, teamColor, position) {
+    function createPlayerRow(player, teamColor, position, defaultAssignment) {
       const row = document.createElement("div");
       row.className = "player-row";
 
@@ -525,7 +649,8 @@
       orderInput.dataset.playerId = player.id;
       orderInput.dataset.field = "order";
 
-      const assignment = formationAssignments.get(player.id);
+      ensureDefaultAssignment(player.id, defaultAssignment);
+      let assignment = formationAssignments.get(player.id);
       if (assignment?.lineId) lineInput.value = assignment.lineId;
       if (assignment?.order) orderInput.value = assignment.order;
 
@@ -595,7 +720,8 @@
               jersey_number: player.info.jerseyNumber,
             },
             homeColor,
-            { x: player.x, y: player.y }
+            { x: player.x, y: player.y },
+            player.info.defaultAssignment
           )
         );
       });
@@ -609,7 +735,8 @@
               jersey_number: player.info.jerseyNumber,
             },
             awayColor,
-            { x: player.x, y: player.y }
+            { x: player.x, y: player.y },
+            player.info.defaultAssignment
           )
         );
       });
