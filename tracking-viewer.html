@@ -350,6 +350,9 @@
       if (player.position?.name) return player.position.name;
       if (player.position?.short_name) return player.position.short_name;
       if (player.position?.abbreviation) return player.position.abbreviation;
+      if (player.player_role?.name) return player.player_role.name;
+      if (player.player_role?.position_group) return player.player_role.position_group;
+      if (player.player_role?.acronym) return player.player_role.acronym;
       return (
         player.position_name ||
         player.position_short_name ||
@@ -364,6 +367,7 @@
       if (typeof player.position_group === "string") return player.position_group;
       if (player.position_group?.name) return player.position_group.name;
       if (player.positionGroup?.name) return player.positionGroup.name;
+      if (player.player_role?.position_group) return player.player_role.position_group;
       return player.positionGroup || player.position_group_name || "";
     }
 
@@ -428,6 +432,12 @@
     }
 
     function getPositionAcronym(player) {
+      const explicitAcronym =
+        player?.position?.acronym ||
+        player?.position?.short_name ||
+        player?.player_role?.acronym ||
+        player?.player_role?.position_group;
+      if (explicitAcronym) return String(explicitAcronym).toUpperCase();
       const positionName = getPlayerPositionName(player);
       const key = getPositionKey(positionName);
       if (key) return key.toUpperCase();
@@ -534,16 +544,25 @@
       });
     }
 
+    function formatPlayerName(player) {
+      if (!player) return "";
+      if (player.name) return player.name;
+      if (player.short_name) return player.short_name;
+      const fullName = [player.first_name, player.last_name].filter(Boolean).join(" ").trim();
+      return fullName || "";
+    }
+
     function buildPlayerMap(info) {
       playerTeamMap = new Map();
       formationAssignments = new Map();
       info.players.forEach((player) => {
         const defaultAssignment = getDefaultAssignmentForPlayer(player);
         const positionAcronym = getPositionAcronym(player);
+        const jerseyNumber = player.jersey_number ?? player.number ?? player.jerseyNumber ?? null;
         playerTeamMap.set(player.id, {
           teamId: player.team_id,
-          name: player.name || player.short_name || "",
-          jerseyNumber: player.jersey_number,
+          name: formatPlayerName(player),
+          jerseyNumber,
           defaultAssignment,
           positionAcronym,
         });
