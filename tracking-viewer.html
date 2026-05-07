@@ -370,6 +370,28 @@
       return Number.isFinite(number) && number > 0 ? number : null;
     }
 
+    function getAssignmentFromTrackingPlayer(player) {
+      if (!player) return null;
+      const lineId = getExplicitNumber(
+        player.line_id ??
+          player.lineId ??
+          player.position_line ??
+          player.position_line_id ??
+          player.position_group
+      );
+      const order = getExplicitNumber(
+        player.line_order ??
+          player.lineOrder ??
+          player.position_order ??
+          player.position_order_id ??
+          player.order ??
+          player.formation_order ??
+          player.formation_place
+      );
+      if (!lineId && !order) return null;
+      return { lineId, order };
+    }
+
     function getPositionKey(positionName) {
       const normalized = normalizePositionName(positionName);
       if (!normalized) return "";
@@ -475,6 +497,30 @@
       formationAssignments.set(playerId, {
         lineId: defaultAssignment.lineId ?? null,
         order: defaultAssignment.order ?? null,
+      });
+    }
+
+    function seedAssignmentsFromFrame(frame) {
+      if (!frame) return;
+      (frame.player_data || []).forEach((player) => {
+        const assignment = getAssignmentFromTrackingPlayer(player);
+        if (!assignment) return;
+        const current = formationAssignments.get(player.player_id);
+        const nextLineId = assignment.lineId ?? current?.lineId ?? null;
+        const nextOrder = assignment.order ?? current?.order ?? null;
+        if (!current || (!current.lineId && !current.order)) {
+          formationAssignments.set(player.player_id, {
+            lineId: nextLineId,
+            order: nextOrder,
+          });
+          return;
+        }
+        if ((current.lineId == null && nextLineId != null) || (current.order == null && nextOrder != null)) {
+          formationAssignments.set(player.player_id, {
+            lineId: current.lineId ?? nextLineId,
+            order: current.order ?? nextOrder,
+          });
+        }
       });
     }
 
@@ -716,6 +762,8 @@
         return;
       }
 
+      seedAssignmentsFromFrame(frame);
+
       homePlayerTable.innerHTML = "";
       awayPlayerTable.innerHTML = "";
 
@@ -805,6 +853,7 @@
       try {
         trackingFrames = await parseJSONLFile(file);
         frameIndex = 0;
+        seedAssignmentsFromFrame(trackingFrames[frameIndex]);
         updateButtons();
         drawFrame(trackingFrames[frameIndex]);
       } catch (error) {
