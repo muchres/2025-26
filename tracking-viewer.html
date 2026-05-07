@@ -106,7 +106,7 @@
     }
     .player-row {
       display: grid;
-      grid-template-columns: minmax(140px, 1fr) 80px 80px 90px 90px;
+      grid-template-columns: minmax(140px, 1fr) 70px 80px 80px 90px 90px;
       gap: 8px;
       align-items: center;
       padding: 6px 8px;
@@ -132,7 +132,7 @@
     }
     .table-header {
       display: grid;
-      grid-template-columns: minmax(140px, 1fr) 80px 80px 90px 90px;
+      grid-template-columns: minmax(140px, 1fr) 70px 80px 80px 90px 90px;
       gap: 8px;
       font-size: 12px;
       font-weight: 700;
@@ -210,6 +210,7 @@
           <h3 id="homeTeamLabel">Home team</h3>
           <div class="table-header">
             <span>Player</span>
+            <span>Pos</span>
             <span>X</span>
             <span>Y</span>
             <span>Line ID</span>
@@ -221,6 +222,7 @@
           <h3 id="awayTeamLabel">Away team</h3>
           <div class="table-header">
             <span>Player</span>
+            <span>Pos</span>
             <span>X</span>
             <span>Y</span>
             <span>Line ID</span>
@@ -425,6 +427,14 @@
       return simplified.replace(/\s+/g, "");
     }
 
+    function getPositionAcronym(player) {
+      const positionName = getPlayerPositionName(player);
+      const key = getPositionKey(positionName);
+      if (key) return key.toUpperCase();
+      if (!positionName) return "";
+      return String(positionName).toUpperCase();
+    }
+
     function getLineIdFromPositionGroup(positionGroup) {
       const normalized = normalizePositionName(positionGroup);
       if (!normalized) return null;
@@ -526,13 +536,23 @@
 
     function buildPlayerMap(info) {
       playerTeamMap = new Map();
+      formationAssignments = new Map();
       info.players.forEach((player) => {
+        const defaultAssignment = getDefaultAssignmentForPlayer(player);
+        const positionAcronym = getPositionAcronym(player);
         playerTeamMap.set(player.id, {
           teamId: player.team_id,
           name: player.name || player.short_name || "",
           jerseyNumber: player.jersey_number,
-          defaultAssignment: getDefaultAssignmentForPlayer(player),
+          defaultAssignment,
+          positionAcronym,
         });
+        if (defaultAssignment) {
+          formationAssignments.set(player.id, {
+            lineId: defaultAssignment.lineId ?? null,
+            order: defaultAssignment.order ?? null,
+          });
+        }
       });
     }
 
@@ -685,7 +705,7 @@
       animationHandle = requestAnimationFrame(animate);
     }
 
-    function createPlayerRow(player, teamColor, position, defaultAssignment) {
+    function createPlayerRow(player, teamColor, position, defaultAssignment, positionAcronym) {
       const row = document.createElement("div");
       row.className = "player-row";
 
@@ -699,6 +719,10 @@
       label.textContent = `${number} ${player.name || player.short_name || player.id}`.trim();
       name.appendChild(badge);
       name.appendChild(label);
+
+      const positionCell = document.createElement("span");
+      positionCell.className = "coord-cell";
+      positionCell.textContent = positionAcronym || "-";
 
       const xCell = document.createElement("span");
       xCell.className = "coord-cell";
@@ -747,6 +771,7 @@
       });
 
       row.appendChild(name);
+      row.appendChild(positionCell);
       row.appendChild(xCell);
       row.appendChild(yCell);
       row.appendChild(lineInput);
@@ -796,7 +821,8 @@
             },
             homeColor,
             { x: player.x, y: player.y },
-            player.info.defaultAssignment
+            player.info.defaultAssignment,
+            player.info.positionAcronym
           )
         );
       });
@@ -811,7 +837,8 @@
             },
             awayColor,
             { x: player.x, y: player.y },
-            player.info.defaultAssignment
+            player.info.defaultAssignment,
+            player.info.positionAcronym
           )
         );
       });
