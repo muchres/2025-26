@@ -268,6 +268,15 @@
     let homeColor = "#1d4ed8";
     let awayColor = "#dc2626";
 
+    const POSITION_GROUP_LINE_MAP = new Map([
+      ["center forward", 4],
+      ["central defender", 2],
+      ["wide attacker", 4],
+      ["midfield", 3],
+      ["full back", 2],
+      ["other", 1],
+    ]);
+
     function updateButtons() {
       const ready = matchInfo && trackingFrames.length > 0 && pitchImage;
       playButton.disabled = !ready;
@@ -348,6 +357,14 @@
       );
     }
 
+    function getPositionGroupName(player) {
+      if (!player) return "";
+      if (typeof player.position_group === "string") return player.position_group;
+      if (player.position_group?.name) return player.position_group.name;
+      if (player.positionGroup?.name) return player.positionGroup.name;
+      return player.positionGroup || player.position_group_name || "";
+    }
+
     function getExplicitNumber(value) {
       const number = Number(value);
       return Number.isFinite(number) && number > 0 ? number : null;
@@ -384,6 +401,12 @@
         }
       });
       return simplified.replace(/\s+/g, "");
+    }
+
+    function getLineIdFromPositionGroup(positionGroup) {
+      const normalized = normalizePositionName(positionGroup);
+      if (!normalized) return null;
+      return POSITION_GROUP_LINE_MAP.get(normalized) ?? null;
     }
 
     function getLineIdFromPosition(positionKey) {
@@ -434,7 +457,11 @@
       );
       const positionName = getPlayerPositionName(player);
       const positionKey = getPositionKey(positionName);
-      const lineId = explicitLineId ?? getLineIdFromPosition(positionKey || positionName);
+      const positionGroupName = getPositionGroupName(player);
+      const lineId =
+        explicitLineId ??
+        getLineIdFromPositionGroup(positionGroupName) ??
+        getLineIdFromPosition(positionKey || positionName);
       const order = explicitOrder ?? getOrderFromPositionKey(lineId, positionKey || positionName);
       if (!lineId && !order) return null;
       return {
