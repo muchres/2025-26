@@ -172,15 +172,35 @@
       </div>
       <div>
         <label for="homeColor">Home team color</label>
-        <input id="homeColor" type="color" value="#1d4ed8" />
+        <input id="homeColor" type="color" value="#dc2626" />
       </div>
       <div>
         <label for="awayColor">Away team color</label>
-        <input id="awayColor" type="color" value="#dc2626" />
+        <input id="awayColor" type="color" value="#2563eb" />
+      </div>
+      <div>
+        <label for="homeLineColor">Home line color</label>
+        <input id="homeLineColor" type="color" value="#f472b6" />
+      </div>
+      <div>
+        <label for="awayLineColor">Away line color</label>
+        <input id="awayLineColor" type="color" value="#bfdbfe" />
       </div>
       <div>
         <label for="fps">Playback FPS</label>
         <input id="fps" type="number" min="1" max="120" value="25" />
+      </div>
+      <div>
+        <label for="timeMinute">Minute</label>
+        <input id="timeMinute" type="number" min="0" value="0" />
+      </div>
+      <div>
+        <label for="timeSecond">Second</label>
+        <input id="timeSecond" type="number" min="0" max="59" value="0" />
+      </div>
+      <div>
+        <label>&nbsp;</label>
+        <button id="timeGoButton" disabled>Go to time</button>
       </div>
       <div>
         <label>&nbsp;</label>
@@ -244,6 +264,11 @@
     const fpsInput = document.getElementById("fps");
     const homeColorInput = document.getElementById("homeColor");
     const awayColorInput = document.getElementById("awayColor");
+    const homeLineColorInput = document.getElementById("homeLineColor");
+    const awayLineColorInput = document.getElementById("awayLineColor");
+    const timeMinuteInput = document.getElementById("timeMinute");
+    const timeSecondInput = document.getElementById("timeSecond");
+    const timeGoButton = document.getElementById("timeGoButton");
 
     const matchNameEl = document.getElementById("matchName");
     const scoreLineEl = document.getElementById("scoreLine");
@@ -267,8 +292,10 @@
 
     let playerTeamMap = new Map();
     let formationAssignments = new Map();
-    let homeColor = "#1d4ed8";
-    let awayColor = "#dc2626";
+    let homeColor = "#dc2626";
+    let awayColor = "#2563eb";
+    let homeLineColor = "#f472b6";
+    let awayLineColor = "#bfdbfe";
 
     const POSITION_GROUP_LINE_MAP = new Map([
       ["center forward", 4],
@@ -283,11 +310,14 @@
       const ready = matchInfo && trackingFrames.length > 0 && pitchImage;
       playButton.disabled = !ready;
       pauseButton.disabled = !ready;
+      timeGoButton.disabled = !ready;
     }
 
     function syncColorInputs() {
       homeColorInput.value = homeColor;
       awayColorInput.value = awayColor;
+      homeLineColorInput.value = homeLineColor;
+      awayLineColorInput.value = awayLineColor;
     }
 
     function parseJSONFile(file) {
@@ -606,6 +636,50 @@
       return Number(value).toFixed(2);
     }
 
+    function parseTimestampToSeconds(value) {
+      if (value === null || value === undefined) return null;
+      if (typeof value === "number") return Number.isFinite(value) ? value : null;
+      const text = String(value).trim();
+      if (!text) return null;
+      if (/^\d+(\.\d+)?$/.test(text)) {
+        const numericValue = Number(text);
+        return Number.isFinite(numericValue) ? numericValue : null;
+      }
+      const parts = text.split(":").map((part) => part.trim());
+      if (parts.length < 2 || parts.length > 3) return null;
+      const seconds = Number.parseFloat(parts[parts.length - 1]);
+      const minutes = Number.parseInt(parts[parts.length - 2], 10);
+      if (!Number.isFinite(seconds) || !Number.isFinite(minutes)) return null;
+      let hours = 0;
+      if (parts.length === 3) {
+        hours = Number.parseInt(parts[0], 10);
+        if (!Number.isFinite(hours)) return null;
+      }
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+
+    function getFrameTimeSeconds(frame) {
+      if (!frame) return null;
+      const candidate = frame.timestamp ?? frame.time ?? frame.clock ?? frame.ts;
+      return parseTimestampToSeconds(candidate);
+    }
+
+    function findClosestFrameIndex(targetSeconds) {
+      if (!trackingFrames.length || targetSeconds == null) return null;
+      let closestIndex = null;
+      let smallestDelta = Number.POSITIVE_INFINITY;
+      trackingFrames.forEach((frame, index) => {
+        const seconds = getFrameTimeSeconds(frame);
+        if (seconds == null) return;
+        const delta = Math.abs(seconds - targetSeconds);
+        if (delta < smallestDelta) {
+          smallestDelta = delta;
+          closestIndex = index;
+        }
+      });
+      return closestIndex;
+    }
+
     function drawFormationLines(frame) {
       if (!frame || !matchInfo) return;
 
@@ -641,7 +715,7 @@
       lineGroups.forEach((group) => {
         if (group.points.length < 2) return;
         group.points.sort((a, b) => a.order - b.order);
-        const color = group.teamId === matchInfo.home_team.id ? homeColor : awayColor;
+        const color = group.teamId === matchInfo.home_team.id ? homeLineColor : awayLineColor;
         ctx.strokeStyle = `${color}aa`;
         ctx.lineWidth = 3;
         ctx.beginPath();
@@ -875,13 +949,35 @@
       drawFrame(trackingFrames[frameIndex]);
     });
 
+    homeLineColorInput.addEventListener("input", (event) => {
+      homeLineColor = event.target.value || homeLineColor;
+      drawFrame(trackingFrames[frameIndex]);
+    });
+
+    awayLineColorInput.addEventListener("input", (event) => {
+      awayLineColor = event.target.value || awayLineColor;
+      drawFrame(trackingFrames[frameIndex]);
+    });
+
+    timeGoButton.addEventListener("click", () => {
+      const minutes = Math.max(0, Number(timeMinuteInput.value) || 0);
+      const seconds = Math.max(0, Number(timeSecondInput.value) || 0);
+      const targetSeconds = minutes * 60 + seconds;
+      const nextIndex = findClosestFrameIndex(targetSeconds);
+      if (nextIndex == null) {
+        alert("No timestamp data found to jump to that time.");
+        return;
+      }
+      frameIndex = nextIndex;
+      lastFrameTime = 0;
+      drawFrame(trackingFrames[frameIndex]);
+    });
+
     matchInfoInput.addEventListener("change", async (event) => {
       const file = event.target.files[0];
       if (!file) return;
       try {
         matchInfo = await parseJSONFile(file);
-        homeColor = matchInfo.home_team_kit?.jersey_color || "#1d4ed8";
-        awayColor = matchInfo.away_team_kit?.jersey_color || "#dc2626";
         syncColorInputs();
         buildPlayerMap(matchInfo);
         renderPlayerTables(trackingFrames[frameIndex]);
