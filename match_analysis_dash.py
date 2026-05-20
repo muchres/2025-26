@@ -8,9 +8,9 @@ from datetime import datetime
 # Load and preprocess data
 df = pd.read_csv('Sporting_Matches_1.csv')
 
-# Convert timestamp columns
-df['timeStamp'] = pd.to_datetime(df['timeStamp'])
-df['match_date'] = pd.to_datetime(df['match_date'])
+# Convert timestamp columns with mixed format handling
+df['timeStamp'] = pd.to_datetime(df['timeStamp'], format='mixed', utc=True)
+df['match_date'] = pd.to_datetime(df['match_date'], format='mixed', utc=True)
 
 # Extract basic match information
 matches = df.groupby('match_id').agg({
@@ -365,8 +365,8 @@ def update_pass_map_home(match_id):
         hoverinfo='text'
     ))
     
-    # Add pass arrows
-    for _, row in home_passes[home_passes['outcome'] == 1].iterrows():
+    # Add pass arrows for successful passes only (limit to avoid clutter)
+    for _, row in successful.head(50).iterrows():
         if pd.notna(row['Pass End X']) and pd.notna(row['Pass End Y']):
             fig.add_annotation(
                 x=row['Pass End X'], y=row['Pass End Y'],
@@ -433,8 +433,8 @@ def update_pass_map_away(match_id):
         hoverinfo='text'
     ))
     
-    # Add pass arrows
-    for _, row in away_passes[away_passes['outcome'] == 1].iterrows():
+    # Add pass arrows for successful passes only (limit to avoid clutter)
+    for _, row in successful.head(50).iterrows():
         if pd.notna(row['Pass End X']) and pd.notna(row['Pass End Y']):
             fig.add_annotation(
                 x=row['Pass End X'], y=row['Pass End Y'],
