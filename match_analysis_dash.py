@@ -10,17 +10,17 @@ df = pd.read_csv('Sporting_Matches_1.csv')
 
 # Convert timestamp columns with mixed format handling
 df['timeStamp'] = pd.to_datetime(df['timeStamp'], format='mixed', utc=True)
-df['match_date'] = pd.to_datetime(df['match_date'], format='mixed', utc=True)
+df['local_date'] = pd.to_datetime(df['local_date'], format='mixed', utc=True)
 
 # Extract basic match information
 matches = df.groupby('match_id').agg({
-    'match_date': 'first',
+    'local_date': 'first',
     'team_name': lambda x: list(x.unique())[:2],
     'team_code': lambda x: list(x.unique())[:2],
 }).reset_index()
 
 matches['match_label'] = matches.apply(
-    lambda x: f"{x['team_code'][0]} vs {x['team_code'][1]} ({x['match_date'].strftime('%Y-%m-%d')})",
+    lambda x: f"{x['team_code'][0]} vs {x['team_code'][1]} ({x['local_date'].strftime('%Y-%m-%d')})",
     axis=1
 )
 
@@ -457,4 +457,4 @@ def update_pass_map_away(match_id):
     return fig
 
 if __name__ == '__main__':
-    app.run_server(debug=True)
+    app.run(debug=True)
