@@ -269,21 +269,28 @@ def _build_predicted_lineup_table(lineup_df):
             "width": w, "fontWeight": "700", "padding": "6px 8px",
             "fontSize": "0.78rem", "color": TEXT_MUTED,
         })
-        for h, w in [("Pos", "22%"), ("#", "13%"), ("Player", "65%")]
+        for h, w in [("Pos", "18%"), ("#", "10%"), ("Player", "36%"), ("Alternative", "36%")]
     ], style={"display": "flex", "background": _TBL_HDR_BG, "borderBottom": f"1px solid {BORDER}"})
 
     rows = [header]
     for i, (_, r) in enumerate(lineup_df.iterrows()):
-        bg  = _ROW_ALT_BG if i % 2 == 1 else CARD_BG
-        pid = r["player_id"]
-        jv  = r["Jersey Number"]
+        bg   = _ROW_ALT_BG if i % 2 == 1 else CARD_BG
+        pid  = r["player_id"]
+        apid = r.get("alt_player_id")
+        jv   = r["Jersey Number"]
         jstr = str(int(jv)) if (jv is not None and jv == jv) else "-"
         name = DISP_NAME.get(pid, str(pid)) if (pid is not None and pid == pid) else "-"
+        alt  = DISP_NAME.get(apid, str(apid)) if (apid is not None and apid == apid) else "-"
         rows.append(html.Div([
-            html.Div(str(r["pos"]), style={"width": "22%", "padding": "5px 8px", "fontSize": "0.82rem"}),
-            html.Div(jstr,          style={"width": "13%", "padding": "5px 8px", "fontSize": "0.82rem"}),
-            html.Div(name,          style={
-                "width": "65%", "padding": "5px 8px", "fontSize": "0.82rem",
+            html.Div(str(r["pos"]), style={"width": "18%", "padding": "5px 8px", "fontSize": "0.82rem"}),
+            html.Div(jstr,          style={"width": "10%", "padding": "5px 8px", "fontSize": "0.82rem"}),
+            html.Div(name, style={
+                "width": "36%", "padding": "5px 8px", "fontSize": "0.82rem",
+                "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap",
+            }),
+            html.Div(alt, style={
+                "width": "36%", "padding": "5px 8px", "fontSize": "0.82rem",
+                "color": TEXT_MUTED,
                 "overflow": "hidden", "textOverflow": "ellipsis", "whiteSpace": "nowrap",
             }),
         ], style={

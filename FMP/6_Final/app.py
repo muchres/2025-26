@@ -37,8 +37,12 @@ from pages.match import page_match
 from pages.premier_league import page_premier_league, page_epl_team
 from pages.lineup import build_pitch_content, build_right_col_content
 from dashboards.multi_match_report import (
-    build_multi_match_body, build_mm_row2, build_mm_minutes, _MM_MAX,
-    get_preset_matches,
+    build_multi_match_body, build_mm_row2, build_mm_minutes, build_mm_pitch,
+    _MM_MAX, get_preset_matches,
+)
+from dashboards.player_active_zones import (
+    get_position_options, build_paz_col_pitch, build_paz_col_table,
+    build_paz_selected_list,
 )
 from utils.lineup_data import get_match_options
 
@@ -213,7 +217,7 @@ def cb_team_tab(_, nav):
     label = json.loads(ctx.triggered[0]["prop_id"].split(".")[0])["tab"]
     _MAP  = {"Matches": "matches", "Lineup": "overview",
              "Tactical Profile": "statistics", "Multiple Matches Analysis": "multiple-matches",
-             "Set Piece Analysis": "set-pieces"}
+             "Set Piece Analysis": "set-pieces", "Player Active Zones": "player-active-zones"}
     return {**nav, "team_tab": _MAP.get(label, "matches")}
 
 
@@ -460,6 +464,7 @@ def cb_mm_count(selected_ids):
     Output({"type": "mm-row2",    "team": MATCH}, "children"),
     Output({"type": "mm-minutes", "team": MATCH}, "children"),
     Output({"type": "mm-body",    "team": MATCH}, "children"),
+    Output({"type": "mm-unavail", "team": MATCH}, "value"),
     Input({"type": "mm-submit",   "team": MATCH}, "n_clicks"),
     State({"type": "mm-sel",      "team": MATCH}, "value"),
     prevent_initial_call=True,
@@ -468,12 +473,154 @@ def cb_mm_submit(_, selected_ids):
     code      = callback_context.triggered_id["team"]
     match_ids = (selected_ids or [])[:_MM_MAX]
     if not match_ids:
-        return no_update, no_update, no_update
+        return no_update, no_update, no_update, no_update
     return (
         build_mm_row2(code, match_ids),
         build_mm_minutes(code, match_ids),
         build_multi_match_body(code, match_ids),
+        [],
     )
+
+
+# ── CB-E: Multi-match — Unavailable players → update pitch only ───────────────
+@app.callback(
+    Output({"type": "mm-pitch",    "team": MATCH}, "children"),
+    Input({"type":  "mm-unavail",  "team": MATCH}, "value"),
+    State({"type":  "mm-sel",      "team": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def cb_mm_unavail(unavailable_ids, selected_ids):
+    code      = callback_context.triggered_id["team"]
+    match_ids = (selected_ids or [])[:_MM_MAX]
+    if not match_ids:
+        return no_update
+    return build_mm_pitch(code, match_ids, unavailable_ids=unavailable_ids or [])
+
+
+# ── CB-PAZ-0: Player Active Zones — Select All / Unselect All ────────────────
+@app.callback(
+    Output({"type": "paz-sel",  "team": MATCH}, "value", allow_duplicate=True),
+    Input({"type": "paz-all",   "team": MATCH}, "n_clicks"),
+    State({"type": "paz-sel",   "team": MATCH}, "options"),
+    prevent_initial_call=True,
+)
+def cb_paz_select_all(_, options):
+    return [o["value"] for o in options] if options else []
+
+
+@app.callback(
+    Output({"type": "paz-sel",   "team": MATCH}, "value", allow_duplicate=True),
+    Input({"type":  "paz-none",  "team": MATCH}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def cb_paz_unselect_all(_):
+    return []
+
+
+# ── CB-PAZ-1: Player Active Zones — preset → fill checklist ─────────────────
+@app.callback(
+    Output({"type": "paz-sel",    "team": MATCH}, "value", allow_duplicate=True),
+    Input({"type": "paz-preset",  "team": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def cb_paz_preset(opp_code):
+    if not opp_code:
+        return no_update
+    code      = callback_context.triggered_id["team"]
+    match_ids = get_preset_matches(code, opp_code)
+    return match_ids if match_ids else no_update
+
+
+# ── CB-PAZ-2: Player Active Zones — match count label ────────────────────────
+@app.callback(
+    Output({"type": "paz-count", "team": MATCH}, "children"),
+    Input({"type": "paz-sel",    "team": MATCH}, "value"),
+)
+def cb_paz_count(selected):
+    return f"{len(selected or [])} selected"
+
+
+# ── CB-PAZ-3: Player Active Zones — live selected-matches panel ───────────────
+@app.callback(
+    Output({"type": "paz-sel-list", "team": MATCH}, "children"),
+    Input({"type": "paz-sel",       "team": MATCH}, "value"),
+    State({"type": "paz-sel",       "team": MATCH}, "options"),
+)
+def cb_paz_sel_list(selected_ids, options):
+    return build_paz_selected_list(selected_ids, options)
+
+
+# ── CB-PAZ-R: Player Active Zones — Reset (clear all player dropdowns) ───────
+@app.callback(
+    Output({"type": "paz-player", "team": MATCH, "col": ALL}, "value"),
+    Input({"type": "paz-reset",   "team": MATCH}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def cb_paz_reset(_):
+    return [None, None, None, None]
+
+
+# ── CB-PAZ-4: Player Active Zones — player → position options + visibility ────
+@app.callback(
+    Output({"type": "paz-pos",   "team": MATCH, "col": ALL}, "options"),
+    Output({"type": "paz-pos",   "team": MATCH, "col": ALL}, "value"),
+    Output({"type": "paz-lower", "team": MATCH, "col": ALL}, "style"),
+    Input({"type": "paz-player", "team": MATCH, "col": ALL}, "value"),
+    State({"type": "paz-sel",    "team": MATCH}, "value"),
+)
+def cb_paz_player(players, match_ids):
+    code = callback_context.triggered_id["team"] if isinstance(callback_context.triggered_id, dict) else None
+    opts_list, vals_list, styles_list = [], [], []
+    for pid in (players or []):
+        if pid and code:
+            pos_opts = get_position_options(pid, code, match_ids)
+            opts_list.append(pos_opts)
+            vals_list.append(None)
+            styles_list.append({"display": "block"})
+        else:
+            opts_list.append([])
+            vals_list.append(None)
+            styles_list.append({"display": "none"})
+    return opts_list, vals_list, styles_list
+
+
+# ── CB-PAZ-5: Player Active Zones — submit → refresh position options ─────────
+@app.callback(
+    Output({"type": "paz-pos",    "team": MATCH, "col": ALL}, "options",
+           allow_duplicate=True),
+    Input({"type": "paz-submit",  "team": MATCH}, "n_clicks"),
+    State({"type": "paz-player",  "team": MATCH, "col": ALL}, "value"),
+    State({"type": "paz-sel",     "team": MATCH}, "value"),
+    prevent_initial_call=True,
+)
+def cb_paz_submit_pos(_, players, match_ids):
+    code = callback_context.triggered_id["team"]
+    return [
+        get_position_options(pid, code, match_ids) if pid else []
+        for pid in (players or [])
+    ]
+
+
+# ── CB-PAZ-6: Player Active Zones — rebuild pitch + table ────────────────────
+@app.callback(
+    Output({"type": "paz-pitch",  "team": MATCH, "col": ALL}, "children"),
+    Output({"type": "paz-table",  "team": MATCH, "col": ALL}, "children"),
+    Input({"type": "paz-pos",     "team": MATCH, "col": ALL}, "value"),
+    Input({"type": "paz-action",  "team": MATCH, "col": ALL}, "value"),
+    Input({"type": "paz-submit",  "team": MATCH}, "n_clicks"),
+    State({"type": "paz-sel",     "team": MATCH}, "value"),
+    State({"type": "paz-player",  "team": MATCH, "col": ALL}, "value"),
+    prevent_initial_call=True,
+)
+def cb_paz_chart(pos_vals, action_vals, _submit, match_ids, players):
+    code    = callback_context.triggered_id["team"]
+    pitches, tables = [], []
+    for i, pid in enumerate(players or []):
+        positions   = pos_vals[i]   if pos_vals   and i < len(pos_vals)   else None
+        action_type = action_vals[i] if action_vals and i < len(action_vals) else "all"
+        pitches.append(build_paz_col_pitch(code, match_ids, pid, positions, action_type))
+        tables.append(build_paz_col_table(code, match_ids, pid, positions))
+    return pitches, tables
 
 
 if __name__ == "__main__":

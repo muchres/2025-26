@@ -303,23 +303,28 @@ def get_default_formation(formation_df1):
     return defaults.iloc[0]["formation"] if not defaults.empty else None
 
 
-def get_predicted_lineup(formation_df1, mins):
+def get_predicted_lineup(formation_df1, mins, unavailable_ids=None, code=None):
     """
     Predict the starting XI for a team using a greedy slot-filling algorithm.
 
     Params
     ------
-    formation_df1 : output of prepare_team_data (formation counts + default flag)
-    mins          : output of prepare_team_data (player-minute rows, already has pos column)
+    formation_df1   : output of prepare_team_data (formation counts + default flag)
+    mins            : output of prepare_team_data (player-minute rows, already has pos column)
+    unavailable_ids : iterable of player_ids to exclude from selection
+    code            : team_code; when provided, full-season data is used as fallback
+                      so that positions vacated by unavailable players are still filled
 
     Returns
     -------
-    DataFrame with columns ['pos', 'Jersey Number', 'player_id'], sorted by POS_ORDER.
-    Empty DataFrame if no formation / match data.
+    DataFrame with columns ['pos', 'Jersey Number', 'player_id', 'alt_player_id'],
+    sorted by POS_ORDER.  Empty DataFrame if no formation / match data.
     """
     selected_formation = get_default_formation(formation_df1)
     if selected_formation is None or mins.empty:
-        return pd.DataFrame(columns=["pos", "Jersey Number", "player_id"])
+        return pd.DataFrame(columns=["pos", "Jersey Number", "player_id", "alt_player_id"])
+
+    unavailable_set = set(unavailable_ids or [])
 
     lineup_slots = (
         form_map_raw[form_map_raw["formation"] == selected_formation][["pos"]]
@@ -342,11 +347,41 @@ def get_predicted_lineup(formation_df1, mins):
     for _, row in mins_pos.iterrows():
         pos = row["pos"]
         pid = row["player_id"]
-        if pid in assigned:
+        if pid in assigned or pid in unavailable_set:
             continue
         if pos in slots_needed and len(slots_filled[pos]) < slots_needed[pos]:
             slots_filled[pos].append(pid)
             assigned.add(pid)
+
+    # Fallback: fill any slot still empty using full-season data for this team
+    unfilled = {pos for pos, need in slots_needed.items()
+                if len(slots_filled.get(pos, [])) < need}
+    if unfilled and code is not None:
+        fb = mins_raw[mins_raw["team_code"] == code].copy()
+        fb = fb.merge(
+            form_map_raw[["formation#", "pos#", "formation", "pos"]],
+            left_on=["Team Formation", "Team Player Formation"],
+            right_on=["formation#", "pos#"],
+            how="left",
+        ).drop(columns=["formation#", "pos#"])
+        fb_pos = (
+            fb.dropna(subset=["pos"])
+            .groupby(["Jersey Number", "player_id", "pos"], as_index=False)
+            .agg(starts=("team setp up", "sum"), minsec=("minsec", "sum"))
+        )
+        fb_pos = fb_pos.sort_values(["starts", "minsec"], ascending=[False, False])
+        for _, row in fb_pos.iterrows():
+            pos = row["pos"]
+            pid = row["player_id"]
+            if pos not in unfilled or pid in assigned or pid in unavailable_set:
+                continue
+            if len(slots_filled.get(pos, [])) < slots_needed.get(pos, 0):
+                slots_filled[pos].append(pid)
+                assigned.add(pid)
+                if len(slots_filled.get(pos, [])) >= slots_needed.get(pos, 0):
+                    unfilled.discard(pos)
+            if not unfilled:
+                break
 
     # Map filled slots back to the ordered lineup rows
     pos_cursor = defaultdict(int)
@@ -360,11 +395,34 @@ def get_predicted_lineup(formation_df1, mins):
     result = lineup_slots.copy()
     result["player_id"] = player_ids
 
+    # Build alternative pools: best non-starter per position (mins_pos already sorted)
+    alt_pool = defaultdict(list)
+    for _, row in mins_pos.iterrows():
+        pid = row["player_id"]
+        if pid not in assigned and pid not in unavailable_set:
+            alt_pool[row["pos"]].append(pid)
+
+    alt_cursor = defaultdict(int)
+    alt_ids = []
+    for pos in lineup_slots["pos"]:
+        pool = alt_pool.get(pos, [])
+        idx = alt_cursor[pos]
+        alt_ids.append(pool[idx] if idx < len(pool) else None)
+        alt_cursor[pos] += 1
+
+    result["alt_player_id"] = alt_ids
+
     jersey_map = (
         mins_pos[["player_id", "Jersey Number"]]
         .drop_duplicates("player_id")
     )
     result = result.merge(jersey_map, on="player_id", how="left")
+
+    # Fill jersey numbers for fallback players absent from the selected-match data
+    _jn_fb = result["player_id"].map(
+        lambda pid: float(JERSEY_NUM[pid]) if pid in JERSEY_NUM else float("nan")
+    )
+    result["Jersey Number"] = result["Jersey Number"].fillna(_jn_fb)
 
     # Sort by canonical position order
     pos_rank = {p: i for i, p in enumerate(POS_ORDER)}
@@ -375,7 +433,7 @@ def get_predicted_lineup(formation_df1, mins):
         .reset_index(drop=True)
     )
 
-    return result[["pos", "Jersey Number", "player_id"]]
+    return result[["pos", "Jersey Number", "player_id", "alt_player_id"]]
 
 
 def get_squad_sections(code, all_players):

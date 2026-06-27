@@ -2668,15 +2668,16 @@ def _mm_lineup_pitch(formation, hex1, hext, lineup_df, name_lkp):
     return fig
 
 
-def build_mm_row2(code, match_ids):
-    """Row 2: selected-matches list (box1) + annotated predicted-formation pitch (box2)."""
+def build_mm_pitch(code, match_ids, unavailable_ids=None):
+    """Pitch box content for the predicted formation (used by the unavailable-players callback)."""
     td   = TEAM_DATA.get(code, {})
     hex1 = td.get("bg", "#333333")
     hext = td.get("text", "#FFFFFF")
 
     formation_df1, _, _, mins = prepare_team_data(code, match_ids)
     formation = get_default_formation(formation_df1)
-    lineup_df = get_predicted_lineup(formation_df1, mins)
+    lineup_df = get_predicted_lineup(formation_df1, mins,
+                                     unavailable_ids=unavailable_ids, code=code)
     name_lkp  = _load_player_names()
 
     if formation:
@@ -2688,22 +2689,60 @@ def build_mm_row2(code, match_ids):
                          "fontSize": "0.7rem", "padding": "8px"})
         ptitle = "Predicted Formation"
 
+    return _box(_cap(ptitle), pitch)
+
+
+def build_mm_row2(code, match_ids):
+    """Row 2: selected-matches list (box1) + annotated predicted-formation pitch (box2)."""
     return html.Div([
         html.Div(_box(_cap("Selected Matches"), _selected_matches_list(code, match_ids)),
                  style={"flexBasis": "50%", "maxWidth": "50%", "flexShrink": "0",
                         "minWidth": "0", "padding": "0 2px", "boxSizing": "border-box"}),
-        html.Div(_box(_cap(ptitle), pitch),
-                 style={"flexBasis": "50%", "maxWidth": "50%", "flexShrink": "0",
+        html.Div(
+            id={"type": "mm-pitch", "team": code},
+            children=build_mm_pitch(code, match_ids),
+            style={"flexBasis": "50%", "maxWidth": "50%", "flexShrink": "0",
                         "minWidth": "0", "padding": "0 2px", "boxSizing": "border-box"}),
     ], style={"display": "flex", "height": f"{MM_ROW2_H}px"})
 
 
 def build_mm_minutes(code, match_ids):
-    """Row 1–2 right column (col 3): squad minutes table."""
+    """Row 1–2 right column (col 3): unavailable-players dropdown + squad minutes table."""
+    _, _, all_players, _ = prepare_team_data(code, match_ids)
+
+    opts = []
+    if all_players is not None and not all_players.empty:
+        _sorted = (
+            all_players
+            .assign(_jn=lambda d: pd.to_numeric(d["Jersey Number"], errors="coerce"))
+            .sort_values("_jn")
+        )
+        for _, row in _sorted.iterrows():
+            pid  = row["player_id"]
+            name = DISP_NAME.get(pid, str(pid))
+            pos  = row.get("Position") or "?"
+            jv   = row.get("Jersey Number")
+            jstr = f"#{int(jv)} " if (jv is not None and str(jv) != "nan") else ""
+            opts.append({"label": f"{pos} — {jstr}{name}", "value": pid})
+
     return html.Div([
         make_section_label("Minutes Played — Selected Matches"),
+        html.Div([
+            html.Div("Unavailable Players", style={
+                "fontSize": "0.66rem", "fontWeight": "700",
+                "color": TEXT_MUTED, "marginBottom": "3px",
+            }),
+            dcc.Dropdown(
+                id={"type": "mm-unavail", "team": code},
+                options=opts,
+                value=[],
+                multi=True,
+                placeholder="Select players to exclude from the predicted XI…",
+                style={"fontSize": "0.66rem"},
+            ),
+        ], style={"padding": "6px 4px 8px 4px"}),
         html.Div(_compact_minutes_table(code, match_ids),
-                 style={"overflowY": "auto", "height": "404px"}),
+                 style={"overflowY": "auto", "height": "350px"}),
     ])
 
 

@@ -9,6 +9,7 @@ from pages.lineup import build_lineup_tab
 from dashboards.multi_match_report import build_multi_match_layout
 from dashboards.set_piece_analysis import build_set_piece_layout
 from dashboards.statistics import build_statistics_layout
+from dashboards.player_active_zones import build_player_active_zones_layout
 
 
 def _result_color(m, code):
@@ -42,11 +43,12 @@ def page_team(nav):
     tab_key = nav.get("team_tab", "matches")
 
     _TABS = [
-        ("matches",          "Matches"),
-        ("statistics",       "Tactical Profile"),
-        ("overview",         "Lineup"),
-        ("multiple-matches", "Multiple Matches Analysis"),
-        ("set-pieces",       "Set Piece Analysis"),
+        ("matches",              "Matches"),
+        ("statistics",           "Tactical Profile"),
+        ("overview",             "Lineup"),
+        ("multiple-matches",     "Multiple Matches Analysis"),
+        ("set-pieces",           "Set Piece Analysis"),
+        ("player-active-zones",  "Player Active Zones"),
     ]
     labels = [label for _, label in _TABS]
     keys   = [k     for k, _    in _TABS]
@@ -104,6 +106,8 @@ def page_team(nav):
         content = build_multi_match_layout(code)
     elif tab_key == "set-pieces":
         content = build_set_piece_layout(code)
+    elif tab_key == "player-active-zones":
+        content = build_player_active_zones_layout(code)
     else:
         content = dashed_box()
 
