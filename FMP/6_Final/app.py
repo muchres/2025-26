@@ -51,7 +51,7 @@ app = dash.Dash(
     ],
     suppress_callback_exceptions=True,
 )
-app.title = "Sports Analytics | 2025/26"
+app.title = "Game Analysis | 2025/26"
 
 # ── Asset serving ─────────────────────────────────────────────────────────────
 @app.server.route("/logos/<path:filename>")

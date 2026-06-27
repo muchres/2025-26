@@ -51,6 +51,6 @@ def page_laliga(nav):
     tab_key = nav.get("laliga_tab", "teams")
     content = page_teams_grid() if tab_key == "teams" else dashed_box()
     return html.Div([
-        page_header("LALIGA", "2025/26 Season · Spain · Primera División"),
+        page_header("LALIGA 2025/26"), #"2025/26 Season · Spain · Primera División"),
         content,
     ])

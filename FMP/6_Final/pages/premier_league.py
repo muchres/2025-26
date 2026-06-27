@@ -75,7 +75,7 @@ def page_premier_league(nav):
     tab_key = nav.get("epl_tab", "teams")
     content = _teams_grid() if tab_key == "teams" else dashed_box()
     return html.Div([
-        page_header("PREMIER LEAGUE", "2025/26 Season · England · Top Flight"),
+        page_header("PREMIER LEAGUE 2025/26"), #"2025/26 Season · England · Top Flight"),
         content,
     ])
 
