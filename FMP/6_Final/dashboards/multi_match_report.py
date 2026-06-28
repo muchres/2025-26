@@ -297,7 +297,10 @@ def _preprocess(df_all, code):
         ).astype(int)
 
     # ── Shot DataFrame ────────────────────────────────────────────────────────
-    shot_df = team_df[team_df["event"].isin(["Goal", "Miss", "Saved Shot", "Post"])].copy()
+    shot_df = team_df[
+        team_df["event"].isin(["Goal", "Miss", "Saved Shot", "Post"]) &
+        ~((team_df["event"] == "Goal") & team_df["own goal"].notna())
+    ].copy()
     shot_df["plot_vx"]     = 68  - (shot_df["y"]                        / 100) * 68
     shot_df["plot_vy"]     =        (shot_df["x"]                        / 100) * 105
     shot_df["plot_end_vx"] = 68  - (shot_df["Goal Mouth Y Coordinate"]  / 100) * 68
@@ -1001,18 +1004,34 @@ def _fig_recovery_fb(df_all, code, color):
         _mdf = _mdf.reset_index(drop=True)
         if "Fast break" not in _mdf.columns:
             continue
-        _shot_idx = _mdf[_mdf["event"].isin(_FB_SHOT) & (_mdf.get("Fast break","") == "Si")].index.tolist()
-        for _sid, _shot_i in enumerate(_shot_idx, 1):
-            if _mdf.at[_shot_i,"team_code"] != code:
-                continue
-            _per = _mdf.at[_shot_i,"period_id"]
+        _shot_idx = _mdf[
+            _mdf["event"].isin(_FB_SHOT) & (_mdf["Fast break"] == "Si") &
+            (_mdf["team_code"] == code)
+        ].index.tolist()
+
+        # Map each FB shot to its nearest recovery anchor (same period, same team)
+        _shot_to_anchor = {}
+        for _shot_i in _shot_idx:
+            _per = _mdf.at[_shot_i, "period_id"]
             _start = _shot_i
-            for _j in range(_shot_i-1, -1, -1):
-                if _mdf.at[_j,"period_id"] != _per: break
-                if _mdf.at[_j,"event"] in _FB_START and _mdf.at[_j,"team_code"] == code:
-                    _start = _j; break
-            _chunk = _mdf.loc[_start:_shot_i].copy()
-            _chunk = _chunk[_chunk["event"].isin(_FB_KEEP) & (_chunk["team_code"] == code)].copy()
+            for _j in range(_shot_i - 1, -1, -1):
+                if _mdf.at[_j, "period_id"] != _per:
+                    break
+                if _mdf.at[_j, "event"] in _FB_START and _mdf.at[_j, "team_code"] == code:
+                    _start = _j
+                    break
+            _shot_to_anchor[_shot_i] = _start
+
+        # Shots sharing the same anchor belong to one sequence
+        _anchor_shots = {}
+        for _si, _ai in _shot_to_anchor.items():
+            _anchor_shots.setdefault(_ai, []).append(_si)
+
+        for _sid, _anchor_i in enumerate(sorted(_anchor_shots), start=1):
+            _shots     = _anchor_shots[_anchor_i]
+            _last_shot = max(_shots)
+            _chunk     = _mdf.loc[_anchor_i:_last_shot].copy()
+            _chunk     = _chunk[_chunk["event"].isin(_FB_KEEP) & (_chunk["team_code"] == code)].copy()
             _chunk.insert(0, "fb_seq_id", f"{_mid}_{_sid}")
             _fb_seqs.append(_chunk)
 
@@ -1540,33 +1559,41 @@ def _fig_cat_breakdown(match_cat_data, season_cat_data, color):
     match_cd  = [[_sub_str(d[2][i]) if i < len(d[2]) else "" for i in range(3)] for d in rev_m]
     season_cd = [[_sub_str(d[2][i]) if i < len(d[2]) else "" for i in range(3)] for d in rev_s]
 
+    # Sliver: clip display width to minimum 1 so zero-value bars remain hoverable.
+    # Actual percentile stored in customdata[0] so tooltip always shows the true value.
+    _SLIVER = 1.0
+    match_vals_disp  = [max(v, _SLIVER) for v in match_vals]
+    season_vals_disp = [max(v, _SLIVER) for v in season_vals]
+    match_cd2  = [[v] + row for v, row in zip(match_vals,  match_cd)]
+    season_cd2 = [[v] + row for v, row in zip(season_vals, season_cd)]
+
     r, g, b = _rgb(color)
     fig = go.Figure()
     fig.add_trace(go.Bar(
         orientation="h", name="Season",
-        x=season_vals, y=labels,
+        x=season_vals_disp, y=labels,
         marker_color="#9A9A9A",
         text=[f"{v:.0f}" for v in season_vals],
         textposition="inside",
         textfont=dict(size=9, color="white"),
-        customdata=season_cd,
+        customdata=season_cd2,
         hovertemplate=(
-            "<b>%{y}</b> Season: %{x:.1f}th pct<br>"
-            "%{customdata[0]}<br>%{customdata[1]}<br>%{customdata[2]}"
+            "<b>%{y}</b> Season: %{customdata[0]:.1f}th pct<br>"
+            "%{customdata[1]}<br>%{customdata[2]}<br>%{customdata[3]}"
             "<extra></extra>"
         ),
     ))
     fig.add_trace(go.Bar(
         orientation="h", name="Selected",
-        x=match_vals, y=labels,
+        x=match_vals_disp, y=labels,
         marker_color=[f"rgba({r},{g},{b},{0.35 + 0.55 * v / 100:.2f})" for v in match_vals],
         text=[f"{v:.0f}" for v in match_vals],
         textposition="inside",
         textfont=dict(size=9, color="white"),
-        customdata=match_cd,
+        customdata=match_cd2,
         hovertemplate=(
-            "<b>%{y}</b> Selected: %{x:.1f}th pct<br>"
-            "%{customdata[0]}<br>%{customdata[1]}<br>%{customdata[2]}"
+            "<b>%{y}</b> Selected: %{customdata[0]:.1f}th pct<br>"
+            "%{customdata[1]}<br>%{customdata[2]}<br>%{customdata[3]}"
             "<extra></extra>"
         ),
     ))
@@ -2072,10 +2099,10 @@ def _fig_attacking_corners(pass_df, color):
     zone = zone.mask(zone.isna() & _other & ~_front,    "far_post")
     cors["_zone"] = zone
 
-    _latt_col = "Leading to attempt" in cors.columns
-    _lgol_col = "Leading to goal"    in cors.columns
-    cors["_latt"] = cors["Leading to attempt"].notna() if _latt_col else False
-    cors["_lgol"] = cors["Leading to goal"].notna()    if _lgol_col else False
+    # Opta encodes assist-to-goal on passes via Assist==16 (TYPE_GOAL), not "Leading to goal"
+    # (which only appears on Error events). Assist in {13,14,15} = key pass / leading to attempt.
+    cors["_lgol"] = (cors["Assist"] == 16)             if "Assist" in cors.columns else False
+    cors["_latt"] = cors["Assist"].isin([13, 14, 15])  if "Assist" in cors.columns else False
 
     _cor_col = _SP_TYPE_CFG["Corner"]["color"]   # red
 
@@ -2571,14 +2598,31 @@ def _cap(text):
 
 
 def _fb_seq_count(df_all, code):
-    """Count fast-break shot sequences for the team (proxy for fast-break seq)."""
+    """Count fast-break sequences for the team (unique anchor groups, per match)."""
     if df_all.empty or "Fast break" not in df_all.columns:
         return 0
-    _shot_ev = {"Goal", "Miss", "Post", "Saved Shot"}
-    sub = df_all[(df_all["team_code"] == code) &
-                 df_all["event"].isin(_shot_ev) &
-                 (df_all["Fast break"] == "Si")]
-    return int(len(sub))
+    _shot_ev  = {"Goal", "Miss", "Post", "Saved Shot"}
+    _start_ev = {"Ball recovery", "Keeper pick-up", "Claim"}
+    _cols     = ["event", "period_id", "team_code", "Fast break"]
+    _total    = 0
+    for _mid, _mdf in df_all.groupby("match_id"):
+        _mdf = _mdf[_cols].reset_index(drop=True)
+        _shot_idxs = _mdf[
+            (_mdf["team_code"] == code) & _mdf["event"].isin(_shot_ev) & (_mdf["Fast break"] == "Si")
+        ].index.tolist()
+        _anchors = set()
+        for _si in _shot_idxs:
+            _per    = _mdf.at[_si, "period_id"]
+            _anchor = _si
+            for _j in range(_si - 1, -1, -1):
+                if _mdf.at[_j, "period_id"] != _per:
+                    break
+                if _mdf.at[_j, "event"] in _start_ev and _mdf.at[_j, "team_code"] == code:
+                    _anchor = _j
+                    break
+            _anchors.add(_anchor)
+        _total += len(_anchors)
+    return _total
 
 
 def _ppda(df_all, def_df, code):

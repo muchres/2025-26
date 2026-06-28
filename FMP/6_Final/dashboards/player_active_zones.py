@@ -26,12 +26,19 @@ _APP  = os.path.dirname(_HERE)
 _DATA = os.path.join(os.path.dirname(_APP), "2_Data")
 _SWOT_CSV   = os.path.join(_DATA, "laliga_swot",  "swot_stats_player_per_match.csv")
 _PLAYER_CSV = os.path.join(_DATA, "laliga_player_list.csv")
-_STATS_CSV  = os.path.join(_DATA, "laliga_stats", "player_stats_per_match.csv")
+_MINS_CSV   = os.path.join(_DATA, "laliga_player_minutes_formations.csv")
 
 # ── Module-level data (loaded once) ───────────────────────────────────────────
 _SWOT_DF   = pd.read_csv(_SWOT_CSV)                        if os.path.exists(_SWOT_CSV)   else pd.DataFrame()
 _PLAYER_DF = pd.read_csv(_PLAYER_CSV, encoding="utf-8-sig") if os.path.exists(_PLAYER_CSV) else pd.DataFrame()
-_STATS_DF  = pd.read_csv(_STATS_CSV)                        if os.path.exists(_STATS_CSV)  else pd.DataFrame()
+
+_MINS_KEYS = ["player_id", "match_id", "Team Formation", "Team Player Formation"]
+if os.path.exists(_MINS_CSV):
+    _MINS_AGG = (pd.read_csv(_MINS_CSV)
+                   .groupby(_MINS_KEYS, as_index=False)["minsec"]
+                   .sum())
+else:
+    _MINS_AGG = pd.DataFrame()
 
 # ── Zone geometry (vertical pitch: x = width 0-68, y = length 0-105) ─────────
 _ZONE_W  = 68.0 / 3   # ≈ 22.67 m per column
@@ -57,9 +64,12 @@ _SEL_HDR_BG  = "#EEECE3"
 _ROW_ALT_BG  = "#F5F3EE"
 
 _ACTION_OPTIONS = [
-    {"label": "All",               "value": "all"},
-    {"label": "Attacking Actions", "value": "attacking"},
-    {"label": "Defensive Actions", "value": "defensive"},
+    {"label": "Att Threats + Def Actions",      "value": "all"},
+    {"label": "Att Threats",                    "value": "attacking"},
+    {"label": "Def Actions",                    "value": "defensive"},
+    {"label": "Att Threats + Def Actions / 90", "value": "all90"},
+    {"label": "Att Threats / 90",               "value": "attacking90"},
+    {"label": "Def Actions / 90",               "value": "defensive90"},
 ]
 
 
@@ -121,23 +131,12 @@ def get_position_options(player_id, code, match_ids=None):
     )
     df = df[df["pos"] != ""]
 
-    # Minutes per match from player_stats CSV
-    match_minutes: dict = {}
-    if not _STATS_DF.empty:
-        stats = _STATS_DF[
-            (_STATS_DF["player_id"] == player_id) & (_STATS_DF["team_code"] == code)
-        ]
-        if match_ids:
-            stats = stats[stats["match_id"].isin(match_ids)]
-        match_minutes = stats.groupby("match_id")["minutes_played"].sum().to_dict()
-
-    pos_minutes: dict = {}
-    for mid, grp in df.groupby("match_id"):
-        mins      = match_minutes.get(mid, 0)
-        positions = grp["pos"].unique()
-        per_pos   = mins / max(len(positions), 1)
-        for pos in positions:
-            pos_minutes[pos] = pos_minutes.get(pos, 0) + per_pos
+    # Position-accurate minutes from the formations minutes CSV
+    if not _MINS_AGG.empty:
+        merged      = df[_MINS_KEYS + ["pos"]].merge(_MINS_AGG, on=_MINS_KEYS, how="left")
+        pos_minutes = merged.groupby("pos")["minsec"].sum().to_dict()
+    else:
+        pos_minutes = {pos: 0 for pos in df["pos"].unique()}
 
     return [
         {"label": f"{pos} ({int(mins)} min)", "value": pos}
@@ -163,6 +162,18 @@ def _filter_swot(player_id, code, match_ids, positions):
     return df
 
 
+def _get_position_minutes(swot_df):
+    """Exact minutes for each player/match/formation/slot row in swot_df.
+
+    Merges on the same 4-key combination used in the SWOT data so that only
+    the minutes spent in the specific formation+position are counted.
+    """
+    if _MINS_AGG.empty or swot_df.empty:
+        return 0.0
+    merged = swot_df[_MINS_KEYS].merge(_MINS_AGG, on=_MINS_KEYS, how="left")
+    return float(merged["minsec"].fillna(0).sum())
+
+
 def _zone_val(df, prefix, zone):
     col = f"{prefix}_z{zone}"
     return int(df[col].fillna(0).sum()) if (col in df.columns and not df.empty) else 0
@@ -176,15 +187,19 @@ def _zsum(df, prefix, zones):
 # Figure / table builders
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _build_heatmap_fig(df, action_type, team_code):
+def _build_heatmap_fig(df, action_type, team_code, total_minutes=0.0):
     """18-zone heatmap overlaid on make_pitch_v (attacking direction = up)."""
+    per90    = action_type.endswith("90")
+    base     = action_type.removesuffix("90")
     prefixes = (
-        _ATK_PREFIXES if action_type == "attacking"
-        else _DEF_PREFIXES if action_type == "defensive"
+        _ATK_PREFIXES if base == "attacking"
+        else _DEF_PREFIXES if base == "defensive"
         else _ALL_PREFIXES
     )
-    zone_counts = {z: sum(_zone_val(df, p, z) for p in prefixes) for z in _ZONES_ALL}
-    max_cnt     = max(zone_counts.values()) if any(zone_counts.values()) else 1
+    raw_counts  = {z: sum(_zone_val(df, p, z) for p in prefixes) for z in _ZONES_ALL}
+    scale       = (90.0 / total_minutes) if (per90 and total_minutes > 0) else 1.0
+    zone_values = {z: raw_counts[z] * scale for z in _ZONES_ALL}
+    max_val     = max(zone_values.values()) if any(zone_values.values()) else 1.0
 
     td  = TEAM_DATA.get(team_code, {})
     hex_col = td.get("bg", "#2c5f2e").lstrip("#")
@@ -196,13 +211,14 @@ def _build_heatmap_fig(df, action_type, team_code):
     fig = make_pitch_v()
 
     for z in _ZONES_ALL:
-        row = (z - 1) // 3   # 0 = bottom (defensive), 5 = top (attacking)
-        col = (z - 1) % 3    # 0 = left, 1 = centre, 2 = right
-        x0, x1 = col * _ZONE_W,       (col + 1) * _ZONE_W
-        y0, y1 = row * _ZONE_H,       (row + 1) * _ZONE_H
-        cnt   = zone_counts.get(z, 0)
-        alpha = 0.07 + 0.73 * (cnt / max_cnt) if max_cnt > 0 else 0.07
+        row = (z - 1) // 3
+        col = (z - 1) % 3
+        x0, x1 = col * _ZONE_W, (col + 1) * _ZONE_W
+        y0, y1 = row * _ZONE_H, (row + 1) * _ZONE_H
+        val   = zone_values.get(z, 0.0)
+        alpha = 0.07 + 0.73 * (val / max_val) if max_val > 0 else 0.07
         tcol  = "white" if alpha > 0.55 else "#333333"
+        label = f"{val:.1f}" if per90 else str(int(round(val)))
 
         fig.add_shape(
             type="rect", x0=x0, y0=y0, x1=x1, y1=y1,
@@ -210,7 +226,7 @@ def _build_heatmap_fig(df, action_type, team_code):
             line=dict(width=0.5, color="#CCCCCC"), layer="below",
         )
         fig.add_annotation(
-            text=str(cnt), x=(x0 + x1) / 2, y=(y0 + y1) / 2,
+            text=label, x=(x0 + x1) / 2, y=(y0 + y1) / 2,
             xref="x", yref="y", showarrow=False,
             font=dict(size=10, color=tcol),
         )
@@ -224,8 +240,12 @@ def _build_heatmap_fig(df, action_type, team_code):
     return fig
 
 
-def _build_table(df):
-    """Actions × (L / C / R / Def3 / Mid3 / Att3) summary table."""
+def _build_table(df, scale=1.0):
+    """Actions × (L / C / R / Def3 / Mid3 / Att3) summary table.
+
+    scale=90/total_mins for per-90 display, 1.0 for raw counts.
+    """
+    per90 = scale != 1.0
     action_rows = [
         ("Prog. Pass",   [("pp",         _ZONES_ALL)]),
         ("Take-on",      [("to_ttl",     _ZONES_ALL)]),
@@ -248,7 +268,9 @@ def _build_table(df):
     for label, prefixes in action_rows:
         row_dict = {"Actions": label}
         for col_label, zones in cols_def:
-            row_dict[col_label] = sum(_zsum(df, pfx, zones) for pfx, _ in prefixes)
+            raw = sum(_zsum(df, pfx, zones) for pfx, _ in prefixes)
+            val = raw * scale
+            row_dict[col_label] = round(val, 1) if per90 else int(val)
         data.append(row_dict)
 
     columns = [{"name": "Actions", "id": "Actions"}] + [
@@ -281,18 +303,27 @@ def build_paz_col_pitch(code, match_ids, player_id, positions, action_type):
     """Pitch heatmap Graph for one column."""
     if not player_id:
         return html.Div()
-    df  = _filter_swot(player_id, code, match_ids or [], positions or [])
-    fig = _build_heatmap_fig(df, action_type or "all", code)
+    df           = _filter_swot(player_id, code, match_ids or [], positions or [])
+    atype        = action_type or "all"
+    total_mins   = 0.0
+    if atype.endswith("90") and not df.empty:
+        total_mins = _get_position_minutes(df)
+    fig = _build_heatmap_fig(df, atype, code, total_minutes=total_mins)
     return dcc.Graph(figure=fig, config={"displayModeBar": False},
                      style={"height": "360px"})
 
 
-def build_paz_col_table(code, match_ids, player_id, positions):
+def build_paz_col_table(code, match_ids, player_id, positions, action_type="all"):
     """Action summary table for one column."""
     if not player_id:
         return html.Div()
-    df = _filter_swot(player_id, code, match_ids or [], positions or [])
-    return _build_table(df)
+    df    = _filter_swot(player_id, code, match_ids or [], positions or [])
+    scale = 1.0
+    if (action_type or "all").endswith("90") and not df.empty:
+        total_mins = _get_position_minutes(df)
+        if total_mins > 0:
+            scale = 90.0 / total_mins
+    return _build_table(df, scale=scale)
 
 
 def build_paz_selected_list(selected_ids, all_options):

@@ -83,8 +83,9 @@ _CAT_PLAYER_CFG = {
     },
     "Set Pieces": {
         "sort": "_sp_total", "ascending": False,
-        "cols": [("Player","player_name"), ("SP Shots","_sp_shots"),
-                 ("SP Goals","_sp_goals"), ("Corners","corners_taken")],
+        "cols": [("Player","player_name"), ("SP Goals","goal_from_sp"),
+                 ("SP Shots","shot_from_sp"), ("SP→Shot","_sp_shots"),
+                 ("SP→Goal","_sp_goals")],
     },
     "Ball Control": {
         "sort": "passes_completed", "ascending": False,

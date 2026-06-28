@@ -728,11 +728,31 @@ def build_match_analysis_layout(match_csv=None,
     _ms_corner_h = int(df1[(df1['team_position'] == 'home') & df1['Corner taken'].notna() & (df1['Corner taken'].astype(str) != '')].shape[0])
     _ms_corner_a = int(df1[(df1['team_position'] == 'away') & df1['Corner taken'].notna() & (df1['Corner taken'].astype(str) != '')].shape[0])
 
-    _fb_shot_ev_ms = {'Goal', 'Miss', 'Post', 'Saved Shot'}
-    _ms_fb_h = (int(df[(df['team_position'] == 'home') & df['event'].isin(_fb_shot_ev_ms) & (df['Fast break'] == 'Si')].shape[0])
-                if 'Fast break' in df.columns else 0)
-    _ms_fb_a = (int(df[(df['team_position'] == 'away') & df['event'].isin(_fb_shot_ev_ms) & (df['Fast break'] == 'Si')].shape[0])
-                if 'Fast break' in df.columns else 0)
+    def _ms_fb_count(team_pos):
+        if 'Fast break' not in df.columns:
+            return 0
+        _shots_ev = {'Goal', 'Miss', 'Post', 'Saved Shot'}
+        _start_ev = {'Ball recovery', 'Keeper pick-up', 'Claim'}
+        _dfx = df[['event', 'period_id', 'team_code', 'team_position', 'Fast break']].reset_index(drop=True)
+        _team_shots = _dfx[
+            (_dfx['team_position'] == team_pos) & _dfx['event'].isin(_shots_ev) & (_dfx['Fast break'] == 'Si')
+        ].index.tolist()
+        _anchors = set()
+        for _si in _team_shots:
+            _tc  = _dfx.at[_si, 'team_code']
+            _per = _dfx.at[_si, 'period_id']
+            _anchor = _si
+            for _j in range(_si - 1, -1, -1):
+                if _dfx.at[_j, 'period_id'] != _per:
+                    break
+                if _dfx.at[_j, 'event'] in _start_ev and _dfx.at[_j, 'team_code'] == _tc:
+                    _anchor = _j
+                    break
+            _anchors.add(_anchor)
+        return len(_anchors)
+
+    _ms_fb_h = _ms_fb_count('home')
+    _ms_fb_a = _ms_fb_count('away')
 
     # ── fig_match_stats ───────────────────────────────────────────────────────
     _SLIVER = 0.1  # minimum bar length when a stat value is 0
@@ -984,7 +1004,7 @@ def build_match_analysis_layout(match_csv=None,
     _home_fmt = '-'.join(str(int(_hf['formation'].iloc[0]))) if not _hf.empty else ''
     _away_fmt = '-'.join(str(int(_af['formation'].iloc[0]))) if not _af.empty else ''
 
-    fig_starting_xi = make_pitch5(lineup, players_df, HOME_COLOUR, AWAY_COLOUR, name_lookup,
+    fig_starting_xi = make_pitch5(lineup, players_df, HOME_DARK, AWAY_DARK, name_lookup,
                                    home_hext=HOME_HEXT, away_hext=AWAY_HEXT)
     _PL = 105 * 1.35
     if _home_fmt:
@@ -992,7 +1012,7 @@ def build_match_analysis_layout(match_csv=None,
             text=f"<b>{_home_fmt}</b>",
             x=0, y=69, xref='x', yref='y',
             showarrow=False,
-            font=dict(size=12, color=HOME_COLOUR, family='Inter, Segoe UI, Arial'),
+            font=dict(size=12, color=HOME_DARK, family='Inter, Segoe UI, Arial'),
             xanchor='left', yanchor='bottom',
         )
     if _away_fmt:
@@ -1000,7 +1020,7 @@ def build_match_analysis_layout(match_csv=None,
             text=f"<b>{_away_fmt}</b>",
             x=_PL, y=69, xref='x', yref='y',
             showarrow=False,
-            font=dict(size=12, color=AWAY_COLOUR, family='Inter, Segoe UI, Arial'),
+            font=dict(size=12, color=AWAY_DARK, family='Inter, Segoe UI, Arial'),
             xanchor='right', yanchor='bottom',
         )
 
@@ -2406,11 +2426,10 @@ def build_match_analysis_layout(match_csv=None,
                  'Jersey Number', 'player_id', 'x', 'y', 'Fast break',
                  'Goal Mouth Y Coordinate', 'Goal Mouth Z Coordinate']].reset_index(drop=True)
 
-    _fb_seqs = []
-    for _sid, _shot_i in enumerate(
-        _df_fb[_df_fb['event'].isin(_fb_shot_ev) & (_df_fb['Fast break'] == 'Si')].index.tolist(),
-        start=1,
-    ):
+    # Map each FB shot to its nearest recovery anchor (same period, same team)
+    _fb_shot_idxs = _df_fb[_df_fb['event'].isin(_fb_shot_ev) & (_df_fb['Fast break'] == 'Si')].index.tolist()
+    _shot_to_anchor = {}
+    for _shot_i in _fb_shot_idxs:
         _team, _period = _df_fb.at[_shot_i, 'team_code'], _df_fb.at[_shot_i, 'period_id']
         _start = _shot_i
         for _j in range(_shot_i - 1, -1, -1):
@@ -2419,8 +2438,20 @@ def build_match_analysis_layout(match_csv=None,
             if _df_fb.at[_j, 'event'] in _fb_seq_str and _df_fb.at[_j, 'team_code'] == _team:
                 _start = _j
                 break
-        _chunk = _df_fb.loc[_start:_shot_i].copy()
-        _chunk = _chunk[_chunk['event'].isin(_fb_seq_keep) & (_chunk['team_code'] == _team)].copy()
+        _shot_to_anchor[_shot_i] = _start
+
+    # Shots sharing the same anchor belong to one sequence
+    _anchor_shots = {}
+    for _si, _ai in _shot_to_anchor.items():
+        _anchor_shots.setdefault(_ai, []).append(_si)
+
+    _fb_seqs = []
+    for _sid, _anchor_i in enumerate(sorted(_anchor_shots), start=1):
+        _shots     = _anchor_shots[_anchor_i]
+        _last_shot = max(_shots)
+        _team      = _df_fb.at[_shots[0], 'team_code']
+        _chunk     = _df_fb.loc[_anchor_i:_last_shot].copy()
+        _chunk     = _chunk[_chunk['event'].isin(_fb_seq_keep) & (_chunk['team_code'] == _team)].copy()
         _chunk.insert(0, 'fb_seq_id', _sid)
         _fb_seqs.append(_chunk)
 

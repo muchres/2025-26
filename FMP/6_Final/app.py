@@ -619,7 +619,7 @@ def cb_paz_chart(pos_vals, action_vals, _submit, match_ids, players):
         positions   = pos_vals[i]   if pos_vals   and i < len(pos_vals)   else None
         action_type = action_vals[i] if action_vals and i < len(action_vals) else "all"
         pitches.append(build_paz_col_pitch(code, match_ids, pid, positions, action_type))
-        tables.append(build_paz_col_table(code, match_ids, pid, positions))
+        tables.append(build_paz_col_table(code, match_ids, pid, positions, action_type))
     return pitches, tables
 
 
